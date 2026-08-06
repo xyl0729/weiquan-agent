@@ -1,0 +1,20 @@
+placeholder_data: true
+warning: 仅用于验证测试框架；必须替换为至少 50 条人工标注的真实口语问题。
+minimum_cases: 50
+minimum_recall_at_5: 0.90
+cases:
+  - id: placeholder-deposit
+    query: 押金一直不退
+    expected_refs:
+      - 测试法.第一条
+
+  - id: placeholder-prepaid
+    query: 预付卡商家停业了
+    expected_refs:
+      - 测试法.第二条
+
+  - id: placeholder-overtime
+    query: 加班工资没有发
+    expected_refs:
+      - 测试法.第三条
+

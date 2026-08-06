@@ -1,0 +1,2 @@
+"""Weiquan Agent application package."""
+

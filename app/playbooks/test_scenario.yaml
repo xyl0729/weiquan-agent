@@ -1,0 +1,23 @@
+id: test_scenario
+name: 占位检索演示
+development_only: true
+warning: 仅用于验证技术管线，不包含真实法律规则
+aliases:
+  - 占位测试
+slots:
+  required:
+    - name: query
+      type: string
+      ask: 请输入用于测试检索的关键词。
+  optional: []
+legal_basis:
+  - ref: 测试法.第一条
+rules:
+  - default: true
+    verdict: placeholder_only
+    key_point: 这是占位结果，不能用于真实纠纷。
+limitation: null
+escalation: []
+evidence_now:
+  - 不要依据占位结果采取任何法律行动
+

@@ -1,0 +1,30 @@
+placeholder_data: true
+warning: 占位数据，上线前必须由人工核对并替换；不得用于真实法律咨询。
+statutes:
+  - law_name: 测试法（占位数据）
+    law_short: 测试法
+    article_no: 第一条
+    article_num: 1
+    content: 占位文本，用于检验押金、退还、租赁等词语的本地检索流程；不代表任何真实法律规定。
+    chapter: 占位章节
+    effective_date: 1970-01-01
+    source_url: https://example.invalid/test-law/article-1
+
+  - law_name: 测试法（占位数据）
+    law_short: 测试法
+    article_no: 第二条
+    article_num: 2
+    content: 占位文本，用于检验预付卡、退款、商家停业等词语的本地检索流程；不代表任何真实法律规定。
+    chapter: 占位章节
+    effective_date: 1970-01-01
+    source_url: https://example.invalid/test-law/article-2
+
+  - law_name: 测试法（占位数据）
+    law_short: 测试法
+    article_no: 第三条
+    article_num: 3
+    content: 占位文本，用于检验加班、工资、劳动等词语的本地检索流程；不代表任何真实法律规定。
+    chapter: 占位章节
+    effective_date: 1970-01-01
+    source_url: https://example.invalid/test-law/article-3
+
