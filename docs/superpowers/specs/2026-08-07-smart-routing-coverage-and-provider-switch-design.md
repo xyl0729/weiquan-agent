@@ -70,7 +70,7 @@
 - 先从自然语言中提取主题和事实；
 - 命中正式 Playbook 时执行完整核验流程；
 - 识别到但尚未核验的主题时进入 `unverified_guidance`；
-- 人身安全和未成年人紧急风险先走 `emergency_guidance`；
+- 正在发生的人身危险、未成年人伤害、紧急就医、疑似刑事侵害、诈骗止损或证据即将灭失等信号先走 `emergency_guidance`；
 - 未知主题不能回退到旧的九类选择题。
 
 ### 4.2 Provider 策略
@@ -182,8 +182,8 @@ flowchart TD
 
 - `ProviderCatalog`：列出白名单 Provider、配置状态、模型名和不可用原因。
 - `ProviderResolver`：根据请求中的 `provider_id` 返回已配置的 Provider，拒绝未知标识，不做静默替换。
-- `SafetySignalGate`：在普通场景抽取前识别紧急人身、未成年人和疑似犯罪信号。
-- `TopicRegistry`：保存 Topic ID、显示名称、识别别名、固定覆盖状态和可选 `playbook_id`。现有 9 个正式主题映射到 Playbook；15 个新增识别域的 `playbook_id` 固定为 `null`。
+- `SafetySignalGate`：在普通场景抽取前识别人身危险、未成年人伤害、紧急就医、疑似刑事侵害、诈骗止损和证据灭失信号。
+- `TopicRegistry`：保存 Topic ID、显示名称、识别别名、基线覆盖状态和可选 `playbook_id`。现有 9 个正式主题映射到 Playbook；15 个新增识别域的 `playbook_id` 固定为 `null`。
 - `ScenarioRouter`：校验 Provider 的候选主题，并由 `TopicRegistry` 和安全门在服务端决定覆盖模式；模型不能自行把主题升级为 `formal`。
 - `CommunicationGuideBuilder`：根据已确认事实和 Playbook 模板生成结构化指南，保证正文只使用允许的事实。
 - `GuidanceBuilder`：为未核验主题生成不作法律结论的取证、沟通和求助指导。
@@ -219,17 +219,23 @@ Key 是否存在可以用于状态判断，但不能将 Key 内容、完整异�
 
 ### 6.3 主题与事实抽取契约
 
-Provider 的抽取结果扩展为受限路由结果，至少包含：
+Provider 只返回候选抽取结果：
 
-- `topic_id`：路由目录中的 Topic ID 或 `unknown`；
-- `scenario_id`：仅在命中正式 Playbook 时由服务端设置，否则为 `null`；
-- `topic_label`：用户能看懂的主题名称；
-- `coverage_mode`：服务端根据安全信号和 `TopicRegistry` 得出的 `formal`、`unverified_guidance` 或 `emergency_guidance`；
-- `facts`：当前主题声明的槽位；
+- `candidate_topic_id`：候选 Topic ID 或 `unknown`；
+- `topic_label`：用户能看懂的候选主题名称；
+- `facts`：正式 Playbook Schema 或通用指导 Schema 允许的候选事实；
 - `unknown_slots`：无法从当前消息确认的槽位；
 - `risk_flags`：安全风险标志；
-- `confidence`：0 到 1 的置信度；
-- Provider、模型、请求 ID 和用量。
+- `confidence`：0 到 1 的候选主题置信度。
+
+服务端校验后生成最终路由结果：
+
+- `topic_id`：规范化后的注册 Topic ID 或 `unknown`；
+- `scenario_id`：仅在命中正式 Playbook 时设置，否则为 `null`；
+- `topic_label`：来自注册表或安全长尾标签的展示名称；
+- `coverage_mode`：根据安全信号和 `TopicRegistry` 派生的 `formal`、`unverified_guidance` 或 `emergency_guidance`；
+- 经 Schema 过滤的事实、未知槽位和风险标志；
+- 实际 Provider、模型、请求 ID 和用量。
 
 服务端必须重新验证：
 
@@ -240,7 +246,7 @@ Provider 的抽取结果扩展为受限路由结果，至少包含：
 - 风险标志是否触发安全优先级；
 - 只有正式结果可以携带引用，且引用必须属于当前 Playbook 白名单。
 
-Provider 返回的 `coverage_mode`、`scenario_id` 和引用都属于不可信输入，服务端必须重新派生或校验。低置信度、互相冲突的事实或无法判断的主题不能生成正式法律结论。
+Provider 不能返回可直接生效的 `coverage_mode` 或 `scenario_id`；如果上游响应夹带这些字段或任意引用，它们都属于不可信输入，服务端必须丢弃并重新派生。低置信度、互相冲突的事实或无法判断的主题不能生成正式法律结论。
 
 ### 6.4 正式方案生成
 
@@ -320,7 +326,7 @@ Provider 返回的 `coverage_mode`、`scenario_id` 和引用都属于不可信�
 - `coverage.mode`：正式、未核验或紧急；
 - `coverage.topic`：识别出的主题；
 - `coverage.confidence`：识别置信度；
-- `coverage.playbook_id`：正式主题 ID，未核验时为 `null`；
+- `coverage.playbook_id`：正式主题 ID，未核验或紧急指导时为 `null`；
 - `coverage.notice`：覆盖边界说明；
 - `guidance.evidence_now`：立即保存的材料；
 - `guidance.actions`：普通沟通和求助动作；
