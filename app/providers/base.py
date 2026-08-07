@@ -9,6 +9,7 @@ from app.agent.models import (
     ExtractionResult,
     PolishingDraft,
 )
+from app.attachments.models import AttachmentEvidenceContext
 
 
 class LLMProvider(Protocol):
@@ -19,6 +20,7 @@ class LLMProvider(Protocol):
         self,
         message: str,
         context: dict[str, object],
+        evidence: tuple[AttachmentEvidenceContext, ...] = (),
     ) -> ExtractionResult:
         ...
 
@@ -26,6 +28,7 @@ class LLMProvider(Protocol):
         self,
         message: str,
         context: CaseContinuationContext,
+        evidence: tuple[AttachmentEvidenceContext, ...] = (),
     ) -> CaseContinuationResult:
         ...
 

@@ -15,6 +15,7 @@ from app.agent.models import (
     PolishingDraft,
     UsageInfo,
 )
+from app.attachments.models import AttachmentEvidenceContext
 from app.providers.base import scenario_definition
 
 
@@ -66,13 +67,21 @@ class FakeProvider:
         self._error = error
         self.extraction_calls = 0
         self.continuation_calls = 0
+        self.extraction_evidence_calls: list[
+            tuple[AttachmentEvidenceContext, ...]
+        ] = []
+        self.continuation_evidence_calls: list[
+            tuple[AttachmentEvidenceContext, ...]
+        ] = []
 
     async def extract_facts(
         self,
         message: str,
         context: dict[str, object],
+        evidence: tuple[AttachmentEvidenceContext, ...] = (),
     ) -> ExtractionResult:
         self.extraction_calls += 1
+        self.extraction_evidence_calls.append(tuple(evidence))
         if self._error is not None:
             raise self._error
         if self._responses:
@@ -119,8 +128,10 @@ class FakeProvider:
         self,
         message: str,
         context: CaseContinuationContext,
+        evidence: tuple[AttachmentEvidenceContext, ...] = (),
     ) -> CaseContinuationResult:
         self.continuation_calls += 1
+        self.continuation_evidence_calls.append(tuple(evidence))
         if self._error is not None:
             raise self._error
         if self._continuation_responses:
