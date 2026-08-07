@@ -1,10 +1,20 @@
 from dataclasses import dataclass
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
+from app.attachments.store import AttachmentStore
 from app.config import Settings
-from app.deps import resolve_credential
+from app.db.session import SessionStore
+from app.deps import (
+    get_attachment_service,
+    get_attachment_store,
+    get_session_store,
+    initialize_attachment_dependencies,
+    resolve_credential,
+)
 
 
 @dataclass
@@ -114,3 +124,54 @@ def test_server_credential_is_metered(mode: str) -> None:
     assert credential.metered is True
     assert credential.key == "server-secret"
 
+
+def test_attachment_dependencies_reuse_pipeline_store_and_cache(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(
+        db_path=tmp_path / "app.db",
+        attachment_temp_dir=tmp_path / "attachment-jobs",
+    )
+    sessions = SessionStore(
+        settings.database_path,
+        ttl_hours=settings.session_ttl_hours,
+    )
+    sessions.initialize()
+    application = FastAPI()
+    application.state.settings = settings
+    application.state.consultation_pipeline = SimpleNamespace(
+        store=sessions
+    )
+    request = Request({"type": "http", "app": application})
+
+    attachment_store = get_attachment_store(request)
+    attachment_service = get_attachment_service(request)
+
+    assert get_session_store(request) is sessions
+    assert attachment_store.sessions is sessions
+    assert attachment_service.store is attachment_store
+    assert get_attachment_store(request) is attachment_store
+    assert get_attachment_service(request) is attachment_service
+    assert application.state.attachment_store is attachment_store
+    assert application.state.attachment_service is attachment_service
+
+
+def test_attachment_startup_dependencies_initialize_requested_database(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(
+        db_path=tmp_path / "fresh.db",
+        attachment_temp_dir=tmp_path / "attachment-jobs",
+    )
+    application = FastAPI()
+    application.state.settings = settings
+
+    attachment_store, attachment_service = (
+        initialize_attachment_dependencies(application)
+    )
+
+    assert isinstance(attachment_store, AttachmentStore)
+    assert attachment_store.sessions.path == settings.database_path
+    assert attachment_service.store is attachment_store
+    assert settings.database_path.exists()
+    assert application.state.session_store is attachment_store.sessions

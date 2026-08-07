@@ -16,6 +16,20 @@ from pydantic import (
 from app.jurisdiction.schema import TimeLimitResult
 
 
+class AttachmentConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmed_text: str = Field(min_length=1)
+
+    @field_validator("confirmed_text")
+    @classmethod
+    def confirmed_text_is_not_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("确认文字不能为空")
+        return normalized
+
+
 class ConsultRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

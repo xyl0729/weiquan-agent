@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from fastapi import HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 
 from app.agent.errors import (
     DataIntegrityError,
@@ -11,6 +11,8 @@ from app.agent.errors import (
     StorageUnavailableError,
 )
 from app.agent.pipeline import ConsultationPipeline
+from app.attachments.service import AttachmentService
+from app.attachments.store import AttachmentStore
 from app.config import Settings
 from app.db.session import SessionStore
 from app.history.service import SessionHistoryService
@@ -98,21 +100,25 @@ def get_active_settings(request: Request) -> Settings:
 
 
 def get_session_store(request: Request) -> SessionStore:
-    existing = getattr(request.app.state, "session_store", None)
+    return _get_session_store(request.app)
+
+
+def _get_session_store(application: FastAPI) -> SessionStore:
+    existing = getattr(application.state, "session_store", None)
     if isinstance(existing, SessionStore):
         return existing
 
     pipeline = getattr(
-        request.app.state,
+        application.state,
         "consultation_pipeline",
         None,
     )
     pipeline_store = getattr(pipeline, "store", None)
     if isinstance(pipeline_store, SessionStore):
-        request.app.state.session_store = pipeline_store
+        application.state.session_store = pipeline_store
         return pipeline_store
 
-    settings = get_active_settings(request)
+    settings = application.state.settings
     try:
         store = SessionStore(
             settings.database_path,
@@ -121,8 +127,65 @@ def get_session_store(request: Request) -> SessionStore:
         store.initialize()
     except (OSError, ValueError) as exc:
         raise StorageUnavailableError() from exc
-    request.app.state.session_store = store
+    application.state.session_store = store
     return store
+
+
+def initialize_attachment_dependencies(
+    application: FastAPI,
+) -> tuple[AttachmentStore, AttachmentService]:
+    settings: Settings = application.state.settings
+    existing_store = getattr(
+        application.state,
+        "attachment_store",
+        None,
+    )
+    if isinstance(existing_store, AttachmentStore):
+        store = existing_store
+    else:
+        store = AttachmentStore(
+            _get_session_store(application),
+            draft_ttl_seconds=settings.attachment_draft_ttl_seconds,
+        )
+        application.state.attachment_store = store
+
+    existing_service = getattr(
+        application.state,
+        "attachment_service",
+        None,
+    )
+    if (
+        isinstance(existing_service, AttachmentService)
+        and existing_service.store is store
+    ):
+        service = existing_service
+    else:
+        service = AttachmentService(
+            store,
+            temp_dir=settings.attachment_temp_path,
+            max_file_bytes=settings.max_attachment_bytes,
+            max_pdf_pages=settings.max_attachment_pdf_pages,
+            max_image_pixels=settings.max_attachment_image_pixels,
+            max_extracted_chars=settings.max_attachment_extracted_chars,
+            low_confidence_threshold=(
+                settings.attachment_low_confidence_threshold
+            ),
+            extraction_timeout_seconds=(
+                settings.attachment_extraction_timeout_seconds
+            ),
+        )
+        application.state.attachment_service = service
+    return store, service
+
+
+def get_attachment_store(request: Request) -> AttachmentStore:
+    store, _ = initialize_attachment_dependencies(request.app)
+    return store
+
+
+def get_attachment_service(request: Request) -> AttachmentService:
+    _, service = initialize_attachment_dependencies(request.app)
+    return service
 
 
 def get_session_history_service(

@@ -1,5 +1,7 @@
+from contextlib import asynccontextmanager
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -17,11 +19,17 @@ from app.agent.errors import (
     SessionNotFoundError,
     StorageUnavailableError,
 )
-from app.attachments.errors import AttachmentError
+from app.attachments.errors import (
+    AttachmentError,
+    AttachmentServiceUnavailableError,
+)
+from app.attachments.extractors import RapidOcrEngine
+from app.api.attachments import router as attachments_router
 from app.api.consult import router as consult_router
 from app.api.health import router as health_router
 from app.api.sessions import router as sessions_router
 from app.config import Settings, get_settings
+from app.deps import initialize_attachment_dependencies
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -47,6 +55,29 @@ SECURITY_HEADERS = {
 }
 
 
+def probe_ocr_readiness() -> bool:
+    try:
+        RapidOcrEngine()
+    except Exception:
+        return False
+    return True
+
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
+    store, service = initialize_attachment_dependencies(application)
+    recovery_ready = True
+    try:
+        service.recover(limit=100)
+    except AttachmentServiceUnavailableError:
+        recovery_ready = False
+    store.purge_expired(limit=100)
+    application.state.ocr_ready = (
+        probe_ocr_readiness() if recovery_ready else False
+    )
+    yield
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -57,12 +88,13 @@ def create_app(
         title="维权作战 Agent",
         version="0.1.0",
         description="信息整理与文书辅助工具，不构成法律意见。",
+        lifespan=_lifespan,
     )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=active_settings.allowed_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
     )
 
@@ -76,6 +108,7 @@ def create_app(
         return response
 
     application.state.settings = active_settings
+    application.state.ocr_ready = False
     if pipeline is not None:
         application.state.consultation_pipeline = pipeline
         pipeline_store = getattr(pipeline, "store", None)
@@ -90,6 +123,7 @@ def create_app(
         _safe_error_handler,
     )
     application.include_router(health_router)
+    application.include_router(attachments_router)
     application.include_router(consult_router)
     application.include_router(sessions_router)
     application.mount(

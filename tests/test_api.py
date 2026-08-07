@@ -1,16 +1,110 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import sqlite3
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 import pytest
 from pydantic import ValidationError
 
+from app.attachments.errors import AttachmentInputError
+from app.attachments.models import ExtractionBlock, ExtractionResult
+from app.attachments.service import AttachmentService
+from app.attachments.store import AttachmentStore
 from app.api.schemas import ConsultResponse
 from app.main import create_app
 from tests.test_pipeline import make_pipeline
+
+
+class ApiExtractionWorker:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.error = error
+        self.calls = 0
+
+    async def extract(
+        self,
+        source_path: Path,
+        **kwargs: Any,
+    ) -> ExtractionResult:
+        del source_path, kwargs
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return ExtractionResult(
+            media_type="application/pdf",
+            page_count=1,
+            extraction_method="direct_text",
+            blocks=(
+                ExtractionBlock(
+                    page_number=1,
+                    block_index=0,
+                    text="invoice total 299",
+                    confidence=0.98,
+                ),
+            ),
+            warnings=("review_amount",),
+        )
+
+
+def make_attachment_client(
+    tmp_path: Path,
+    *,
+    worker: ApiExtractionWorker | None = None,
+    ocr_ready: bool = True,
+    max_context_chars: int = 12_000,
+) -> tuple[TestClient, object, AttachmentStore, ApiExtractionWorker]:
+    pipeline, sessions = make_pipeline(tmp_path)
+    settings = pipeline.settings.model_copy(
+        update={
+            "attachment_temp_dir": tmp_path / "attachment-jobs",
+            "max_attachment_context_chars": max_context_chars,
+        }
+    )
+    attachments = AttachmentStore(
+        sessions,
+        draft_ttl_seconds=settings.attachment_draft_ttl_seconds,
+    )
+    active_worker = worker or ApiExtractionWorker()
+    service = AttachmentService(
+        attachments,
+        temp_dir=settings.attachment_temp_path,
+        max_file_bytes=settings.max_attachment_bytes,
+        max_pdf_pages=settings.max_attachment_pdf_pages,
+        max_image_pixels=settings.max_attachment_image_pixels,
+        max_extracted_chars=settings.max_attachment_extracted_chars,
+        low_confidence_threshold=(
+            settings.attachment_low_confidence_threshold
+        ),
+        extraction_timeout_seconds=(
+            settings.attachment_extraction_timeout_seconds
+        ),
+        worker=active_worker,
+    )
+    application = create_app(settings, pipeline=pipeline)
+    application.state.attachment_store = attachments
+    application.state.attachment_service = service
+    application.state.ocr_ready = ocr_ready
+    return TestClient(application), application, attachments, active_worker
+
+
+def upload_pdf(client: TestClient):
+    return client.post(
+        "/api/attachments",
+        files={
+            "file": (
+                "invoice.pdf",
+                b"%PDF-1.7\nsafe api fixture",
+                "application/pdf",
+            )
+        },
+    )
 
 
 def test_consult_api_followup_and_ready_response(tmp_path: Path) -> None:
@@ -315,6 +409,318 @@ def test_health_reports_local_dependencies_without_secrets(
     assert response.json()["status"] == "ok"
     assert response.json()["checks"]["provider"] == "offline"
     assert "key" not in response.text.casefold()
+
+
+def test_attachment_api_upload_review_confirm_delete_and_cors(
+    tmp_path: Path,
+) -> None:
+    client, _, _, worker = make_attachment_client(tmp_path)
+
+    uploaded = upload_pdf(client)
+
+    assert uploaded.status_code == 200
+    body = uploaded.json()
+    attachment_id = body["id"]
+    assert body == {
+        "id": attachment_id,
+        "status": "review_required",
+        "original_name": "invoice.pdf",
+        "media_type": "application/pdf",
+        "size_bytes": len(b"%PDF-1.7\nsafe api fixture"),
+        "page_count": 1,
+        "extraction_method": "direct_text",
+        "blocks": [
+            {
+                "page_number": 1,
+                "block_index": 0,
+                "text": "invoice total 299",
+                "confidence": 0.98,
+            }
+        ],
+        "warnings": ["review_amount"],
+        "confirmed_text": None,
+        "error_code": None,
+    }
+    assert worker.calls == 1
+
+    fetched = client.get(f"/api/attachments/{attachment_id}")
+    confirmed = client.patch(
+        f"/api/attachments/{attachment_id}",
+        json={"confirmed_text": "  invoice total 399\n"},
+    )
+    preflight = client.options(
+        f"/api/attachments/{attachment_id}",
+        headers={
+            "Origin": "http://localhost:8000",
+            "Access-Control-Request-Method": "PATCH",
+        },
+    )
+    deleted = client.delete(f"/api/attachments/{attachment_id}")
+
+    assert fetched.status_code == 200
+    assert fetched.json() == body
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "confirmed"
+    assert confirmed.json()["confirmed_text"] == "invoice total 399"
+    assert preflight.status_code == 200
+    assert "PATCH" in preflight.headers["access-control-allow-methods"]
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+
+    for response in (uploaded, fetched, confirmed, deleted):
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["x-frame-options"] == "DENY"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert "default-src 'self'" in response.headers[
+            "content-security-policy"
+        ]
+
+    public_text = uploaded.text.casefold()
+    for private_name in (
+        "sha256",
+        "reservation_id",
+        "session_id",
+        "turn_id",
+        "expires_at",
+        "created_at",
+        "updated_at",
+        "source_path",
+        "traceback",
+    ):
+        assert private_name not in public_text
+
+    deleted_again = client.delete(f"/api/attachments/{attachment_id}")
+    missing = client.get(f"/api/attachments/{attachment_id}")
+    assert deleted_again.status_code == 204
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["code"] == "attachment_not_found"
+
+
+def test_attachment_api_returns_safe_failed_public_object(
+    tmp_path: Path,
+) -> None:
+    worker = ApiExtractionWorker(
+        error=AttachmentInputError("attachment_corrupt")
+    )
+    client, _, _, _ = make_attachment_client(tmp_path, worker=worker)
+
+    response = upload_pdf(client)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["error_code"] == "attachment_corrupt"
+    assert response.json()["blocks"] == []
+    assert "traceback" not in response.text.casefold()
+    assert "rapidocr" not in response.text.casefold()
+    assert str(tmp_path).casefold() not in response.text.casefold()
+
+
+def test_attachment_api_validation_state_and_idempotence(
+    tmp_path: Path,
+) -> None:
+    client, _, attachments, _ = make_attachment_client(
+        tmp_path,
+        max_context_chars=8,
+    )
+    uploaded = upload_pdf(client)
+    attachment_id = uploaded.json()["id"]
+
+    blank = client.patch(
+        f"/api/attachments/{attachment_id}",
+        json={"confirmed_text": "   "},
+    )
+    extra = client.patch(
+        f"/api/attachments/{attachment_id}",
+        json={"confirmed_text": "invoice", "sha256": "secret"},
+    )
+    overlong = client.patch(
+        f"/api/attachments/{attachment_id}",
+        json={"confirmed_text": "123456789"},
+    )
+    invalid_id = client.get("/api/attachments/not-a-uuid")
+    unknown_id = str(uuid4())
+    unknown_get = client.get(f"/api/attachments/{unknown_id}")
+    unknown_patch = client.patch(
+        f"/api/attachments/{unknown_id}",
+        json={"confirmed_text": "invoice"},
+    )
+    unknown_delete = client.delete(f"/api/attachments/{unknown_id}")
+
+    assert blank.status_code == 422
+    assert blank.json()["detail"]["code"] == "request_validation"
+    assert extra.status_code == 422
+    assert extra.json()["detail"]["code"] == "request_validation"
+    assert overlong.status_code == 413
+    assert overlong.json()["detail"]["code"] == (
+        "attachment_context_too_long"
+    )
+    assert invalid_id.status_code == 422
+    assert invalid_id.json()["detail"]["code"] == "request_validation"
+    assert unknown_get.status_code == 404
+    assert unknown_patch.status_code == 404
+    assert unknown_delete.status_code == 204
+
+    failed = attachments.create_processing(
+        original_name="failed.pdf",
+        media_type="application/pdf",
+        size_bytes=10,
+        sha256="a" * 64,
+    )
+    attachments.save_failure(failed.id, "attachment_corrupt")
+    failed_patch = client.patch(
+        f"/api/attachments/{failed.id}",
+        json={"confirmed_text": "invoice"},
+    )
+    assert failed_patch.status_code == 409
+    assert failed_patch.json()["detail"]["code"] == (
+        "attachment_not_reviewable"
+    )
+
+    confirmed = client.patch(
+        f"/api/attachments/{attachment_id}",
+        json={"confirmed_text": "invoice"},
+    )
+    assert confirmed.status_code == 200
+    reservation_id = attachments.reserve([attachment_id])
+    reserved_delete = client.delete(
+        f"/api/attachments/{attachment_id}"
+    )
+    assert reserved_delete.status_code == 409
+    assert reserved_delete.json()["detail"]["code"] == (
+        "attachment_already_bound"
+    )
+
+    session = attachments.sessions.create_session()
+    turn = attachments.sessions.add_turn(
+        session.id,
+        user_message="review invoice",
+        facts={},
+        rule_matches=[],
+        response={"status": "need_more_facts"},
+    )
+    attachments.bind_reserved(
+        reservation_id,
+        session_id=session.id,
+        turn_id=turn.id,
+        expected_ids=[attachment_id],
+    )
+    bound_delete = client.delete(f"/api/attachments/{attachment_id}")
+    assert bound_delete.status_code == 409
+    assert bound_delete.json()["detail"]["code"] == (
+        "attachment_already_bound"
+    )
+
+    expired = attachments.create_processing(
+        original_name="expired.pdf",
+        media_type="application/pdf",
+        size_bytes=10,
+        sha256="b" * 64,
+        now=datetime.now(UTC) - timedelta(hours=2),
+    )
+    expired_get = client.get(f"/api/attachments/{expired.id}")
+    expired_delete = client.delete(f"/api/attachments/{expired.id}")
+    assert expired_get.status_code == 404
+    assert expired_delete.status_code == 204
+
+
+def test_ocr_unavailable_only_disables_upload(
+    tmp_path: Path,
+) -> None:
+    client, _, attachments, worker = make_attachment_client(
+        tmp_path,
+        ocr_ready=False,
+    )
+    review = attachments.create_processing(
+        original_name="existing.pdf",
+        media_type="application/pdf",
+        size_bytes=10,
+        sha256="c" * 64,
+    )
+    attachments.save_extraction(
+        review.id,
+        ExtractionResult(
+            media_type="application/pdf",
+            page_count=1,
+            extraction_method="direct_text",
+            blocks=(
+                ExtractionBlock(
+                    page_number=1,
+                    block_index=0,
+                    text="existing text",
+                    confidence=1,
+                ),
+            ),
+        ),
+    )
+
+    unavailable = upload_pdf(client)
+    health = client.get("/health")
+    existing = client.get(f"/api/attachments/{review.id}")
+    confirmed = client.patch(
+        f"/api/attachments/{review.id}",
+        json={"confirmed_text": "existing text"},
+    )
+    consultation = client.post(
+        "/api/consult",
+        json={"message": "My landlord kept the deposit."},
+    )
+
+    assert unavailable.status_code == 503
+    assert unavailable.json()["detail"]["code"] == (
+        "attachment_service_unavailable"
+    )
+    assert worker.calls == 0
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert health.json()["checks"]["ocr"] == "unavailable"
+    assert existing.status_code == 200
+    assert confirmed.status_code == 200
+    assert consultation.status_code == 200
+
+
+def test_startup_recovers_processing_and_caches_ocr_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline, sessions = make_pipeline(tmp_path)
+    settings = pipeline.settings.model_copy(
+        update={"attachment_temp_dir": tmp_path / "startup-jobs"}
+    )
+    attachments = AttachmentStore(
+        sessions,
+        draft_ttl_seconds=settings.attachment_draft_ttl_seconds,
+    )
+    processing = attachments.create_processing(
+        original_name="interrupted.pdf",
+        media_type="application/pdf",
+        size_bytes=10,
+        sha256="d" * 64,
+    )
+    probes = 0
+
+    def probe() -> bool:
+        nonlocal probes
+        probes += 1
+        return True
+
+    monkeypatch.setattr("app.main.probe_ocr_readiness", probe)
+    application = create_app(settings, pipeline=pipeline)
+
+    with TestClient(application) as client:
+        first = client.get("/health")
+        second = client.get("/health")
+
+        assert first.json()["checks"]["ocr"] == "ok"
+        assert second.json()["checks"]["ocr"] == "ok"
+        assert application.state.attachment_store.sessions is sessions
+        assert application.state.attachment_service.store is (
+            application.state.attachment_store
+        )
+
+    recovered = application.state.attachment_store.get(processing.id)
+    assert recovered.status == "failed"
+    assert recovered.error_code == "attachment_service_unavailable"
+    assert probes == 1
 
 
 def test_web_index_static_assets_and_security_headers(

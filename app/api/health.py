@@ -90,6 +90,12 @@ def health(
     else:
         checks["daily_spend_circuit"] = "inactive"
 
+    checks["ocr"] = (
+        "ok"
+        if getattr(request.app.state, "ocr_ready", False)
+        else "unavailable"
+    )
+
     healthy_values = {
         "ok",
         "offline",
@@ -99,7 +105,11 @@ def health(
     }
     overall = (
         "ok"
-        if all(value in healthy_values for value in checks.values())
+        if all(
+            value in healthy_values
+            for name, value in checks.items()
+            if name != "ocr"
+        )
         else "degraded"
     )
     return {
