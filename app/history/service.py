@@ -16,7 +16,13 @@ from app.agent.errors import (
     StorageUnavailableError,
 )
 from app.api.schemas import ConsultResponse
-from app.db.models import SessionListRecord, SessionRecord, TurnRecord
+from app.attachments.projection import attachment_turn_public
+from app.db.models import (
+    SessionHistoryTurnRecord,
+    SessionListRecord,
+    SessionRecord,
+    TurnRecord,
+)
 from app.db.session import SessionStore
 from app.playbooks.registry import PlaybookRegistry
 
@@ -84,23 +90,27 @@ class SessionHistoryService:
     def get_session(self, session_id: str) -> SessionDetail:
         try:
             stored = self.store.get_session_history(session_id)
-        except (ValidationError, ValueError) as exc:
+        except (
+            LookupError,
+            TypeError,
+            ValidationError,
+            ValueError,
+        ) as exc:
             raise _history_integrity_error() from exc
         except (OSError, sqlite3.Error) as exc:
             raise StorageUnavailableError() from exc
         if stored is None:
             raise SessionNotFoundError()
-        session, turns = stored
-        if not turns:
+        if not stored.turns:
             raise SessionNotFoundError()
 
         try:
             allowed_citations = _allowed_citation_refs(
                 self.registry,
-                session.scenario_id,
+                stored.session.scenario_id,
             )
             public_turns = _project_history_turns(
-                turns,
+                stored.turns,
                 allowed_citations=allowed_citations,
             )
         except DataIntegrityError:
@@ -108,7 +118,10 @@ class SessionHistoryService:
         except (LookupError, TypeError, ValidationError, ValueError) as exc:
             raise _history_integrity_error() from exc
         return SessionDetail(
-            session=_detail_session(session, turns[0]),
+            session=_detail_session(
+                stored.session,
+                stored.turns[0].turn,
+            ),
             turns=public_turns,
         )
 
@@ -179,15 +192,20 @@ def _history_turn(
 
 
 def _project_history_turns(
-    turns: Sequence[TurnRecord],
+    turns: Sequence[SessionHistoryTurnRecord],
     *,
     allowed_citations: set[str],
 ) -> tuple[HistoryTurn, ...]:
     projected: list[HistoryTurn] = []
     previous_plan: dict[str, Any] | None = None
 
-    for turn in turns:
+    for stored_turn in turns:
+        turn = stored_turn.turn
         payload = deepcopy(turn.response)
+        payload["attachments"] = [
+            attachment_turn_public(attachment).model_dump(mode="json")
+            for attachment in stored_turn.attachments
+        ]
         signature = _plan_signature(payload)
         explicit_kind = payload.get("turn_kind")
 

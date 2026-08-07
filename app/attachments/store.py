@@ -20,7 +20,7 @@ from app.attachments.models import (
     ExtractionResult,
     normalize_confirmed_text,
 )
-from app.db.models import AttachmentRecord
+from app.db.models import AttachmentRecord, attachment_record_from_row
 from app.db.session import SessionStore
 
 
@@ -298,7 +298,7 @@ class AttachmentStore:
             ).fetchone()
         if row is None:
             return None
-        record = _record_from_row(row)
+        record = attachment_record_from_row(row)
         if record.expires_at is not None and record.expires_at <= current:
             return None
         return record
@@ -419,7 +419,10 @@ class AttachmentStore:
                 """,
                 (normalized_turn_id,),
             ).fetchall()
-            records = [_record_from_row(row) for row in rows]
+            records = [
+                attachment_record_from_row(row)
+                for row in rows
+            ]
         return records
 
     def reservation_binder(
@@ -462,7 +465,10 @@ class AttachmentStore:
                 """,
                 (normalized_reservation,),
             ).fetchall()
-            records = [_record_from_row(row) for row in rows]
+            records = [
+                attachment_record_from_row(row)
+                for row in rows
+            ]
             stored_ids = tuple(record.id for record in records)
             if stored_ids != normalized_ids:
                 raise AttachmentStateConflictError(
@@ -516,7 +522,7 @@ class AttachmentStore:
                 """,
                 (normalized_turn_id,),
             ).fetchall()
-        return [_record_from_row(row) for row in rows]
+        return [attachment_record_from_row(row) for row in rows]
 
     def delete(self, attachment_id: str) -> None:
         normalized_id = _uuid(attachment_id)
@@ -601,7 +607,7 @@ class AttachmentStore:
         ).fetchone()
         if row is None:
             raise AttachmentNotFoundError()
-        return _record_from_row(row)
+        return attachment_record_from_row(row)
 
     def _records_by_ids(
         self,
@@ -619,7 +625,10 @@ class AttachmentStore:
         ).fetchall()
         by_id = {
             record.id: record
-            for record in (_record_from_row(row) for row in rows)
+            for record in (
+                attachment_record_from_row(row)
+                for row in rows
+            )
         }
         if any(attachment_id not in by_id for attachment_id in attachment_ids):
             raise AttachmentNotFoundError()
@@ -638,36 +647,6 @@ class AttachmentStore:
         if current.tzinfo is None:
             raise ValueError("时间必须包含时区")
         return current.astimezone(UTC)
-
-
-def _record_from_row(row: sqlite3.Row) -> AttachmentRecord:
-    blocks_data = _load_json_array(row["extracted_blocks_json"])
-    warnings_data = _load_json_array(row["warnings_json"])
-    return AttachmentRecord(
-        id=row["id"],
-        session_id=row["session_id"],
-        turn_id=row["turn_id"],
-        turn_position=row["turn_position"],
-        status=row["status"],
-        original_name=row["original_name"],
-        media_type=row["media_type"],
-        size_bytes=row["size_bytes"],
-        sha256=row["sha256"],
-        page_count=row["page_count"],
-        extraction_method=row["extraction_method"],
-        extracted_blocks=tuple(
-            ExtractionBlock.model_validate(item)
-            for item in blocks_data
-        ),
-        confirmed_text=row["confirmed_text"],
-        warnings=tuple(warnings_data),
-        error_code=row["error_code"],
-        reservation_id=row["reservation_id"],
-        reserved_at=row["reserved_at"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-        expires_at=row["expires_at"],
-    )
 
 
 def _transition(
@@ -714,13 +693,6 @@ def _json_array(values: Sequence[Any]) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
-
-
-def _load_json_array(value: str) -> list[Any]:
-    decoded = json.loads(value)
-    if not isinstance(decoded, list):
-        raise ValueError("附件 JSON 数据必须是数组")
-    return decoded
 
 
 def _required_datetime(value: datetime | None) -> datetime:

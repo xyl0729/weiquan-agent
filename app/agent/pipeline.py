@@ -32,9 +32,10 @@ from app.attachments.models import (
     AttachmentEvidenceContext,
     AttachmentTurnPublic,
 )
+from app.attachments.projection import attachment_turn_public
 from app.attachments.store import AttachmentStore
 from app.config import Settings
-from app.db.models import AttachmentRecord, SessionRecord, TurnRecord
+from app.db.models import SessionRecord, TurnRecord
 from app.db.session import SessionStore
 from app.jurisdiction.rules import (
     JurisdictionRegistry,
@@ -1084,7 +1085,7 @@ class ConsultationPipeline:
         public_attachments: tuple[AttachmentTurnPublic, ...] = ()
         if attachment_binder is not None:
             public_attachments = tuple(
-                _attachment_turn_public(record)
+                attachment_turn_public(record)
                 for record in self.attachments.list_for_turn(
                     result.turn_id
                 )
@@ -1206,28 +1207,3 @@ def _attachment_ids(
     if len(normalized) != len(set(normalized)):
         raise RequestInputError("附件 ID 不得重复")
     return normalized
-
-
-def _attachment_turn_public(
-    record: AttachmentRecord,
-) -> AttachmentTurnPublic:
-    if (
-        record.status != "bound"
-        or record.page_count is None
-        or record.extraction_method is None
-        or record.confirmed_text is None
-    ):
-        raise DataIntegrityError(
-            "attachment_projection_invalid",
-            "附件公开信息完整性检查失败",
-        )
-    return AttachmentTurnPublic(
-        id=record.id,
-        original_name=record.original_name,
-        media_type=record.media_type,
-        size_bytes=record.size_bytes,
-        page_count=record.page_count,
-        extraction_method=record.extraction_method,
-        warnings=record.warnings,
-        confirmed_text=record.confirmed_text,
-    )

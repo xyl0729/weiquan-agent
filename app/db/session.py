@@ -15,10 +15,13 @@ from app.agent.models import UsageInfo
 from app.db.models import (
     AuditRecord,
     RateLimitDailyRecord,
+    SessionHistoryRecord,
+    SessionHistoryTurnRecord,
     SessionListRecord,
     SessionRecord,
     TurnRecord,
     UsageDailyRecord,
+    attachment_record_from_row,
 )
 
 
@@ -435,7 +438,7 @@ class SessionStore:
         session_id: str,
         *,
         now: datetime | None = None,
-    ) -> tuple[SessionRecord, list[TurnRecord]] | None:
+    ) -> SessionHistoryRecord | None:
         normalized_id = _uuid(session_id)
         current = self._utc(now)
         with self._connect() as connection:
@@ -454,9 +457,60 @@ class SessionStore:
                 """,
                 (normalized_id,),
             ).fetchall()
-        return (
-            _session_from_row(session_row),
-            [_turn_from_row(row) for row in turn_rows],
+            attachment_rows = connection.execute(
+                """
+                SELECT attachments.*
+                FROM attachments
+                LEFT JOIN turns AS related_turn
+                  ON related_turn.id = attachments.turn_id
+                WHERE attachments.session_id = ?
+                   OR related_turn.session_id = ?
+                ORDER BY
+                    attachments.turn_id,
+                    attachments.turn_position,
+                    attachments.id
+                """,
+                (normalized_id, normalized_id),
+            ).fetchall()
+
+            session = _session_from_row(session_row)
+            turns = tuple(_turn_from_row(row) for row in turn_rows)
+            turn_ids = {turn.id for turn in turns}
+            attachments_by_turn = {
+                turn.id: []
+                for turn in turns
+            }
+            for row in attachment_rows:
+                attachment = attachment_record_from_row(row)
+                if (
+                    attachment.status != "bound"
+                    or attachment.session_id != session.id
+                    or attachment.turn_id not in turn_ids
+                ):
+                    raise ValueError("历史附件关系无效")
+                attachments_by_turn[attachment.turn_id].append(attachment)
+
+            history_turns: list[SessionHistoryTurnRecord] = []
+            for turn in turns:
+                turn_attachments = tuple(attachments_by_turn[turn.id])
+                positions = tuple(
+                    attachment.turn_position
+                    for attachment in turn_attachments
+                )
+                if (
+                    len(turn_attachments) > 3
+                    or positions != tuple(range(len(turn_attachments)))
+                ):
+                    raise ValueError("历史附件顺序无效")
+                history_turns.append(
+                    SessionHistoryTurnRecord(
+                        turn=turn,
+                        attachments=turn_attachments,
+                    )
+                )
+        return SessionHistoryRecord(
+            session=session,
+            turns=tuple(history_turns),
         )
 
     def delete_session(

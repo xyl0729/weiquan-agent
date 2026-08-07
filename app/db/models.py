@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -186,3 +188,58 @@ class AttachmentRecord(BaseModel):
         if has_reservation and self.status != "confirmed":
             raise ValueError("只有已确认附件可以被预留")
         return self
+
+
+class SessionHistoryTurnRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    turn: TurnRecord
+    attachments: tuple[AttachmentRecord, ...] = Field(
+        default_factory=tuple
+    )
+
+
+class SessionHistoryRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    session: SessionRecord
+    turns: tuple[SessionHistoryTurnRecord, ...] = Field(
+        default_factory=tuple
+    )
+
+
+def attachment_record_from_row(row: sqlite3.Row) -> AttachmentRecord:
+    blocks_data = _load_json_array(row["extracted_blocks_json"])
+    warnings_data = _load_json_array(row["warnings_json"])
+    return AttachmentRecord(
+        id=row["id"],
+        session_id=row["session_id"],
+        turn_id=row["turn_id"],
+        turn_position=row["turn_position"],
+        status=row["status"],
+        original_name=row["original_name"],
+        media_type=row["media_type"],
+        size_bytes=row["size_bytes"],
+        sha256=row["sha256"],
+        page_count=row["page_count"],
+        extraction_method=row["extraction_method"],
+        extracted_blocks=tuple(
+            ExtractionBlock.model_validate(item)
+            for item in blocks_data
+        ),
+        confirmed_text=row["confirmed_text"],
+        warnings=tuple(warnings_data),
+        error_code=row["error_code"],
+        reservation_id=row["reservation_id"],
+        reserved_at=row["reserved_at"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        expires_at=row["expires_at"],
+    )
+
+
+def _load_json_array(value: str) -> list[Any]:
+    decoded = json.loads(value)
+    if not isinstance(decoded, list):
+        raise ValueError("附件 JSON 数据必须是数组")
+    return decoded

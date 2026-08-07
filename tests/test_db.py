@@ -9,6 +9,8 @@ import pytest
 
 from app.agent.errors import SessionNotFoundError
 from app.agent.models import UsageInfo
+from app.attachments.models import ExtractionBlock, ExtractionResult
+from app.attachments.store import AttachmentStore
 from app.db.session import BASE_SCHEMA_SQL, SCHEMA_VERSION, SessionStore
 
 
@@ -19,6 +21,53 @@ def make_store(path: Path, *, ttl_hours: int = 72) -> SessionStore:
     store = SessionStore(path, ttl_hours=ttl_hours, now=lambda: NOW)
     store.initialize()
     return store
+
+
+def confirmed_attachment(
+    store: AttachmentStore,
+    *,
+    name: str,
+    text: str,
+):
+    processing = store.create_processing(
+        original_name=name,
+        media_type="application/pdf",
+        size_bytes=1024,
+        sha256="a" * 64,
+    )
+    store.save_extraction(
+        processing.id,
+        ExtractionResult(
+            media_type="application/pdf",
+            page_count=1,
+            extraction_method="direct_text",
+            blocks=(
+                ExtractionBlock(
+                    page_number=1,
+                    block_index=0,
+                    text=text,
+                    confidence=1,
+                ),
+            ),
+        ),
+    )
+    return store.confirm(processing.id, text)
+
+
+def bind_attachment(
+    store: AttachmentStore,
+    *,
+    session_id: str,
+    turn_id: str,
+    attachment_id: str,
+) -> None:
+    reservation_id = store.reserve([attachment_id])
+    store.bind_reserved(
+        reservation_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        expected_ids=[attachment_id],
+    )
 
 
 def test_initialize_is_idempotent_and_sets_schema_version(
@@ -320,9 +369,9 @@ def test_get_history_and_delete_session_are_atomic(
     history = store.get_session_history(session.id)
 
     assert history is not None
-    restored_session, restored_turns = history
-    assert restored_session.id == session.id
-    assert [item.id for item in restored_turns] == [turn.id]
+    assert history.session.id == session.id
+    assert [item.turn.id for item in history.turns] == [turn.id]
+    assert history.turns[0].attachments == ()
     assert store.delete_session(session.id) is True
     assert store.delete_session(session.id) is False
     assert store.get_session_history(session.id) is None
@@ -336,6 +385,93 @@ def test_get_history_and_delete_session_are_atomic(
         ).fetchone()[0]
     assert turn_count == 0
     assert audit_count == 0
+
+
+def test_session_delete_and_expiry_only_cascade_owned_attachments(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "app.db"
+    store = make_store(path, ttl_hours=1)
+    attachments = AttachmentStore(
+        store,
+        draft_ttl_seconds=3 * 3600,
+        now=lambda: NOW,
+    )
+
+    first_session = store.create_session()
+    first_turn = store.add_turn(
+        first_session.id,
+        user_message="第一个案件",
+        facts={},
+        rule_matches=[],
+        response={"status": "need_more_facts"},
+    )
+    first_attachment = confirmed_attachment(
+        attachments,
+        name="第一个案件.pdf",
+        text="第一份正文",
+    )
+    bind_attachment(
+        attachments,
+        session_id=first_session.id,
+        turn_id=first_turn.id,
+        attachment_id=first_attachment.id,
+    )
+
+    second_session = store.create_session()
+    second_turn = store.add_turn(
+        second_session.id,
+        user_message="第二个案件",
+        facts={},
+        rule_matches=[],
+        response={"status": "need_more_facts"},
+    )
+    second_attachment = confirmed_attachment(
+        attachments,
+        name="第二个案件.pdf",
+        text="第二份正文",
+    )
+    bind_attachment(
+        attachments,
+        session_id=second_session.id,
+        turn_id=second_turn.id,
+        attachment_id=second_attachment.id,
+    )
+    draft = attachments.create_processing(
+        original_name="未绑定草稿.pdf",
+        media_type="application/pdf",
+        size_bytes=128,
+        sha256="b" * 64,
+    )
+
+    assert store.delete_session(first_session.id) is True
+    assert attachments.get_optional(first_attachment.id) is None
+    assert attachments.get_optional(second_attachment.id) is not None
+    assert attachments.get_optional(draft.id) is not None
+    assert [turn.id for turn in store.list_turns(second_session.id)] == [
+        second_turn.id
+    ]
+
+    assert store.get_session_history(
+        second_session.id,
+        now=NOW + timedelta(hours=1),
+    ) is None
+    assert attachments.get_optional(second_attachment.id) is None
+    assert attachments.get_optional(draft.id, now=NOW) is not None
+
+    with sqlite3.connect(path) as connection:
+        remaining = {
+            row[0]
+            for row in connection.execute(
+                "SELECT id FROM attachments"
+            )
+        }
+        remaining_turns = {
+            row[0] for row in connection.execute("SELECT id FROM turns")
+        }
+    assert remaining == {draft.id}
+    assert first_turn.id not in remaining_turns
+    assert second_turn.id not in remaining_turns
 
 
 def test_list_sessions_purges_expired_records(tmp_path: Path) -> None:
