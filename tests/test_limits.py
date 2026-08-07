@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.agent.errors import CircuitTrippedError, RateLimitError
-from app.agent.models import UsageInfo
+from app.agent.models import CaseContinuationResult, UsageInfo
 from app.db.session import SessionStore
 from app.limits.circuit import DailySpendCircuit
 from app.limits.rate_limit import (
@@ -224,3 +224,82 @@ def test_pipeline_checks_real_provider_limit_before_call(
                 client_identifier="127.0.0.1",
             )
         )
+
+
+def test_continuation_records_one_call_and_one_usage_entry(
+    tmp_path: Path,
+) -> None:
+    class DeepSeekLikeFake(FakeProvider):
+        name = "deepseek"
+        model = "deepseek-test"
+
+    clock = Clock()
+    controls_store = make_store(tmp_path, clock)
+    controls = make_controls(
+        controls_store,
+        clock,
+        rate_limit=2,
+    )
+    provider = DeepSeekLikeFake(
+        continuation_responses=[
+            CaseContinuationResult(
+                route="same_case",
+                scenario_id="return_refused",
+                answer="先保留拒绝处理的记录，再按原方案推进。",
+                confidence=0.99,
+                provider="deepseek",
+                model="deepseek-test",
+                usage=UsageInfo(input_tokens=7, output_tokens=5),
+            )
+        ]
+    )
+    pipeline, pipeline_store = make_pipeline(
+        tmp_path,
+        provider=provider,
+        usage_controls=controls,
+    )
+    client_identifier = "127.0.0.1"
+
+    first = asyncio.run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            client_identifier=client_identifier,
+        )
+    )
+    second = asyncio.run(
+        pipeline.consult(
+            session_id=first.session_id,
+            message="商家还是不配合怎么办",
+            client_identifier=client_identifier,
+        )
+    )
+
+    rate = controls_store.get_rate_limit(
+        day=date(2026, 8, 6),
+        client_hash=hash_client_identifier(client_identifier),
+    )
+    usage = controls_store.get_usage(
+        day=date(2026, 8, 6),
+        client_hash=hash_client_identifier(client_identifier),
+        provider="deepseek",
+    )
+    assert second.turn_kind == "followup_answer"
+    assert provider.extraction_calls == 1
+    assert provider.continuation_calls == 1
+    assert rate is not None
+    assert rate.request_count == 2
+    assert usage is not None
+    assert usage.request_count == 2
+    assert usage.total_tokens == 12
+
+    with pytest.raises(RateLimitError):
+        asyncio.run(
+            pipeline.consult(
+                session_id=first.session_id,
+                message="再下一步呢",
+                client_identifier=client_identifier,
+            )
+        )
+
+    assert provider.continuation_calls == 1
+    assert len(pipeline_store.list_turns(first.session_id)) == 2

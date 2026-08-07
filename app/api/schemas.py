@@ -10,6 +10,7 @@ from pydantic import (
     Field,
     HttpUrl,
     field_validator,
+    model_validator,
 )
 
 from app.jurisdiction.schema import TimeLimitResult
@@ -96,6 +97,61 @@ class UsageResponse(BaseModel):
     estimated_cost_usd: float | None = Field(default=None, ge=0)
 
 
+TurnKindResponse = Literal[
+    "fact_collection",
+    "initial_plan",
+    "plan_update",
+    "followup_answer",
+    "new_case",
+]
+
+
+class NewCaseResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scenario_id: str | None = Field(default=None, max_length=100)
+    label: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def fields_are_consistent(self) -> "NewCaseResponse":
+        if (self.scenario_id is None) != (self.label is None):
+            raise ValueError("新咨询场景与名称必须同时提供或同时为空")
+        return self
+
+
+class ReplyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    text: str = Field(min_length=1, max_length=800)
+    suggested_actions: list[str] = Field(
+        default_factory=list,
+        max_length=3,
+    )
+    citation_refs: list[str] = Field(
+        default_factory=list,
+        max_length=3,
+    )
+    new_case: NewCaseResponse | None = None
+
+    @field_validator("text")
+    @classmethod
+    def text_is_not_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("回复正文不能为空")
+        return normalized
+
+    @field_validator("suggested_actions", "citation_refs")
+    @classmethod
+    def list_items_are_valid(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("回复列表项不能为空")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("回复列表项不得重复")
+        return normalized
+
+
 class ConsultResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -105,12 +161,59 @@ class ConsultResponse(BaseModel):
     followup_round: int = Field(ge=0, le=2)
     can_ask_more: bool
     status: Literal["need_more_facts", "ready", "escalate"]
+    turn_kind: TurnKindResponse | None = None
     verdict: VerdictResponse | None = None
     plan: PlanResponse | None = None
+    reply: ReplyResponse | None = None
     questions: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     usage: UsageResponse
+
+    @model_validator(mode="after")
+    def turn_fields_are_consistent(self) -> "ConsultResponse":
+        if self.turn_kind is None:
+            if self.reply is not None:
+                raise ValueError("旧版响应不得包含无类型的短回复")
+            return self
+
+        if self.turn_kind == "fact_collection":
+            if (
+                self.plan is not None
+                or self.verdict is not None
+                or self.reply is not None
+            ):
+                raise ValueError("事实收集轮次不得包含方案、判断或短回复")
+            if not self.questions and not self.limitations:
+                raise ValueError("事实收集轮次必须包含问题或限制说明")
+        elif self.turn_kind in {"initial_plan", "plan_update"}:
+            if (
+                self.plan is None
+                or self.verdict is None
+                or self.reply is not None
+            ):
+                raise ValueError("方案轮次必须包含方案和判断，且不得包含短回复")
+        elif self.turn_kind == "followup_answer":
+            if (
+                self.reply is None
+                or self.plan is not None
+                or self.verdict is not None
+                or self.reply.new_case is not None
+            ):
+                raise ValueError("普通续问只能包含当前案件的短回复")
+        elif (
+            self.reply is None
+            or self.reply.new_case is None
+            or self.plan is not None
+            or self.verdict is not None
+        ):
+            raise ValueError("分案轮次必须包含新咨询提示")
+
+        if self.reply is not None:
+            public_refs = [citation.ref for citation in self.citations]
+            if self.reply.citation_refs != public_refs:
+                raise ValueError("短回复引用必须与公开法条完全一致")
+        return self
 
 
 HistoryStatus = Literal["need_more_facts", "ready", "escalate"]

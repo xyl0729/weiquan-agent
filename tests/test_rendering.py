@@ -103,6 +103,40 @@ def test_builder_requires_every_mandatory_reference() -> None:
         )
 
 
+def test_builder_ignores_statutes_outside_playbook_legal_basis() -> None:
+    playbook = _playbook()
+    evaluation = evaluate_playbook(playbook, _draft().facts)
+    jurisdictions = JurisdictionRegistry.from_path(
+        PROJECT_ROOT / "app" / "jurisdiction" / "data.yaml"
+    )
+    outcome = evaluate_jurisdiction(
+        playbook,
+        jurisdictions,
+        jurisdiction="CN",
+        facts=evaluation.facts,
+    )
+    connection = connect_database(PROJECT_ROOT / "data" / "statutes.db")
+    try:
+        unrelated = get_statute_by_ref(
+            connection,
+            "消费者权益保护法.第二十四条",
+        )
+    finally:
+        connection.close()
+    assert unrelated is not None
+
+    draft = build_consultation_draft(
+        playbook,
+        evaluation,
+        [*_statutes(playbook), unrelated],
+        outcome,
+    )
+
+    assert [citation.ref for citation in draft.plan.citations] == [
+        basis.ref for basis in playbook.legal_basis
+    ]
+
+
 def test_fixed_templates_render_evidence_first_and_escape_input() -> None:
     draft = _draft()
     injected = draft.plan.model_copy(

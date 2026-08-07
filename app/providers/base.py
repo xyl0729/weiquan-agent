@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol
 
-from app.agent.models import ExtractionResult, PolishingDraft
+from app.agent.models import (
+    CaseContinuationContext,
+    CaseContinuationResult,
+    ExtractionResult,
+    PolishingDraft,
+)
 
 
 class LLMProvider(Protocol):
@@ -15,6 +20,13 @@ class LLMProvider(Protocol):
         message: str,
         context: dict[str, object],
     ) -> ExtractionResult:
+        ...
+
+    async def continue_case(
+        self,
+        message: str,
+        context: CaseContinuationContext,
+    ) -> CaseContinuationResult:
         ...
 
     async def polish_text(self, draft: PolishingDraft) -> str:

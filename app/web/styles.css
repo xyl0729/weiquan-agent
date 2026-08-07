@@ -849,6 +849,14 @@ svg {
   background: var(--red);
 }
 
+.assistant-message[data-turn-kind="plan_update"] .assistant-rule {
+  background: var(--green);
+}
+
+.assistant-message[data-turn-kind="new_case"] .assistant-rule {
+  background: var(--yellow);
+}
+
 .assistant-content {
   min-width: 0;
 }
@@ -869,13 +877,79 @@ svg {
   white-space: nowrap;
 }
 
+.plan-update-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 2px;
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.plan-update-note .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.reply-copy {
+  max-width: 66ch;
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
 .question-list,
 .plan-list,
-.limitation-list {
+.limitation-list,
+.reply-action-list {
   display: grid;
   gap: 8px;
   margin: 10px 0 0;
   padding-left: 20px;
+}
+
+.reply-action-list {
+  gap: 6px;
+}
+
+.new-case-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid var(--rule);
+}
+
+.new-case-block small {
+  min-width: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.new-case-action {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--blue);
+  background: var(--paper);
+  color: var(--blue-dark);
+  font-weight: 700;
+}
+
+.new-case-action:hover {
+  background: var(--blue-soft);
+}
+
+.new-case-action .icon {
+  width: 16px;
+  height: 16px;
 }
 
 .response-section {
@@ -1516,6 +1590,15 @@ summary:focus-visible {
   .assistant-heading {
     flex-direction: column;
     gap: 2px;
+  }
+
+  .new-case-block {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .new-case-action {
+    width: 100%;
   }
 
   .citation summary {

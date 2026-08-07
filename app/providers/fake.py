@@ -8,7 +8,13 @@ from typing import Any
 from uuid import uuid4
 
 from app.agent.errors import ProviderError
-from app.agent.models import ExtractionResult, PolishingDraft, UsageInfo
+from app.agent.models import (
+    CaseContinuationContext,
+    CaseContinuationResult,
+    ExtractionResult,
+    PolishingDraft,
+    UsageInfo,
+)
 from app.providers.base import scenario_definition
 
 
@@ -16,7 +22,15 @@ _SCENARIO_KEYWORDS: dict[str, tuple[str, ...]] = {
     "deposit_deduction": ("押金", "房东", "退租", "退房", "租房"),
     "prepaid_card": ("预付卡", "健身房", "储值", "余额", "商家停业"),
     "overtime_pay": ("加班", "工资", "劳动仲裁", "用人单位", "公司"),
-    "return_refused": ("退货", "七天无理由", "换货", "质量问题"),
+    "return_refused": (
+        "网购",
+        "退款",
+        "退货",
+        "七天无理由",
+        "换货",
+        "质量问题",
+        "与描述不符",
+    ),
     "counterfeit_goods": ("假货", "以假充真", "三倍赔偿", "掺假"),
     "training_refund": ("培训", "网课", "课程", "退学费"),
     "auto_renewal": ("自动续费", "连续包月", "自动扣款", "默认勾选"),
@@ -40,16 +54,25 @@ class FakeProvider:
         self,
         responses: Iterable[ExtractionResult] | None = None,
         *,
+        continuation_responses: (
+            Iterable[CaseContinuationResult] | None
+        ) = None,
         error: ProviderError | None = None,
     ) -> None:
         self._responses = deque(responses or ())
+        self._continuation_responses = deque(
+            continuation_responses or ()
+        )
         self._error = error
+        self.extraction_calls = 0
+        self.continuation_calls = 0
 
     async def extract_facts(
         self,
         message: str,
         context: dict[str, object],
     ) -> ExtractionResult:
+        self.extraction_calls += 1
         if self._error is not None:
             raise self._error
         if self._responses:
@@ -92,10 +115,84 @@ class FakeProvider:
             usage=UsageInfo(),
         )
 
+    async def continue_case(
+        self,
+        message: str,
+        context: CaseContinuationContext,
+    ) -> CaseContinuationResult:
+        self.continuation_calls += 1
+        if self._error is not None:
+            raise self._error
+        if self._continuation_responses:
+            return self._continuation_responses.popleft()
+
+        new_scenario_id = self._classify_new_case(message, context)
+        if new_scenario_id is not None:
+            return CaseContinuationResult(
+                route="new_case",
+                scenario_id=new_scenario_id,
+                confidence=0.99,
+                provider=self.name,
+                model=self.model,
+                request_id=f"fake-{uuid4()}",
+                usage=UsageInfo(),
+            )
+
+        action_refs = [
+            action.ref for action in context.locked_case.actions[:2]
+        ]
+        citation_refs = [
+            citation.ref for citation in context.locked_case.citations[:1]
+        ]
+        if action_refs:
+            answer = (
+                "先保留对方不配合的记录，再按现有方案中的下一步操作"
+                "推进；如平台或对方仍拒绝处理，保存新的书面反馈。"
+            )
+        else:
+            answer = "先保存对方不配合的记录，并继续按现有方案推进。"
+        return CaseContinuationResult(
+            route="same_case",
+            scenario_id=context.current_scenario.id,
+            facts={},
+            cleared_slots=[],
+            answer=answer,
+            action_refs=action_refs,
+            citation_refs=citation_refs,
+            confidence=0.99,
+            provider=self.name,
+            model=self.model,
+            request_id=f"fake-{uuid4()}",
+            usage=UsageInfo(),
+        )
+
     async def polish_text(self, draft: PolishingDraft) -> str:
         if self._error is not None:
             raise self._error
         return draft.text
+
+    @staticmethod
+    def _classify_new_case(
+        message: str,
+        context: CaseContinuationContext,
+    ) -> str | None:
+        current_id = context.current_scenario.id
+        registered_ids = {
+            scenario.id for scenario in context.registered_scenarios
+        }
+        best_id: str | None = None
+        best_score = 0
+        for scenario_id, keywords in _SCENARIO_KEYWORDS.items():
+            if (
+                scenario_id == current_id
+                or scenario_id not in registered_ids
+            ):
+                continue
+            score = sum(keyword in message for keyword in keywords)
+            if score > best_score:
+                best_id = scenario_id
+                best_score = score
+        return best_id
 
     @staticmethod
     def _classify(message: str, context: dict[str, object]) -> str:

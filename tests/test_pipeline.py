@@ -9,8 +9,10 @@ import pytest
 from app.agent.errors import (
     DataIntegrityError,
     ProviderError,
+    ProviderOutputError,
     SessionNotFoundError,
 )
+from app.agent.models import CaseContinuationResult
 from app.agent.pipeline import PIPELINE_STAGES, ConsultationPipeline
 from app.config import Settings
 from app.db.session import SessionStore
@@ -70,7 +72,8 @@ def make_pipeline(
 def test_followup_then_ready_plan_uses_all_fixed_stages(
     tmp_path: Path,
 ) -> None:
-    pipeline, store = make_pipeline(tmp_path)
+    provider = FakeProvider()
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
 
     first = run(pipeline.consult(message="房东不退押金"))
     second = run(
@@ -95,11 +98,20 @@ def test_followup_then_ready_plan_uses_all_fixed_stages(
     assert second.rendered is not None
     assert second.draft.plan.verdict.code == "deduction_lacks_stated_basis"
     assert second.rendered.plan_text.startswith("【立即保全证据】")
-    assert len(second.draft.plan.citations) >= 7
+    assert [
+        citation.ref for citation in second.draft.plan.citations
+    ] == [
+        basis.ref
+        for basis in pipeline.registry.get(
+            "deposit_deduction"
+        ).legal_basis
+    ]
     assert all(
         str(item.source_url).startswith("https://")
         for item in second.draft.plan.citations
     )
+    assert provider.extraction_calls == 2
+    assert provider.continuation_calls == 0
 
     audits = store.list_audit_records(audit_id=second.audit_id)
     assert [record.stage for record in audits] == list(PIPELINE_STAGES)
@@ -224,8 +236,310 @@ def test_migrated_scenario_pipeline_smoke(
     assert result.draft is not None
     assert result.rendered is not None
     assert result.draft.plan.verdict.code == verdict
+    assert [
+        citation.ref for citation in result.draft.plan.citations
+    ] == [
+        basis.ref
+        for basis in pipeline.registry.get(scenario_id).legal_basis
+    ]
     if scenario_id == "small_claim_procedure":
         assert result.draft.plan.jurisdiction.status == "local_data_missing"
+
+
+def test_existing_plan_uses_only_continuation_and_returns_short_answer(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider()
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+    second = run(
+        pipeline.consult(
+            session_id=first.session_id,
+            message="那不配合怎么办",
+        )
+    )
+    third = run(
+        pipeline.consult(
+            session_id=first.session_id,
+            message="他还是不配合怎么办",
+        )
+    )
+
+    assert first.turn_kind == "initial_plan"
+    assert first.draft is not None
+    assert second.turn_kind == "followup_answer"
+    assert second.draft is None
+    assert second.reply is not None
+    assert third.turn_kind == "followup_answer"
+    assert third.draft is None
+    assert third.reply is not None
+    assert provider.extraction_calls == 1
+    assert provider.continuation_calls == 2
+    assert len(store.list_turns(first.session_id)) == 3
+    allowed_citations = {
+        basis.ref
+        for basis in pipeline.registry.get("return_refused").legal_basis
+    }
+    assert set(second.reply.citation_refs) <= allowed_citations
+    assert set(third.reply.citation_refs) <= allowed_citations
+    assert {
+        citation.ref for citation in second.reply_citations
+    } == set(second.reply.citation_refs)
+    assert {
+        citation.ref for citation in third.reply_citations
+    } == set(third.reply.citation_refs)
+
+
+def test_changed_continuation_facts_recompute_plan_locally(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        continuation_responses=[
+            CaseContinuationResult(
+                route="same_case",
+                scenario_id="return_refused",
+                facts={"purchase_amount": 1200},
+                answer="金额已经补充。",
+                confidence=0.99,
+                provider="fake",
+                model="fake-deterministic-v1",
+            )
+        ]
+    )
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+
+    updated = run(
+        pipeline.consult(
+            session_id=first.session_id,
+            message="更正一下，商品价款是1200元",
+        )
+    )
+
+    assert updated.turn_kind == "plan_update"
+    assert updated.draft is not None
+    assert updated.reply is None
+    assert store.require_session(first.session_id).facts[
+        "purchase_amount"
+    ] == 1200
+    assert provider.extraction_calls == 1
+    assert provider.continuation_calls == 1
+
+
+def test_cleared_optional_fact_recomputes_plan_locally(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        continuation_responses=[
+            CaseContinuationResult(
+                route="same_case",
+                scenario_id="return_refused",
+                cleared_slots=["purchase_amount"],
+                answer="已撤回尚未确认的商品金额。",
+                confidence=0.99,
+                provider="fake",
+                model="fake-deterministic-v1",
+            )
+        ]
+    )
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+
+    updated = run(
+        pipeline.consult(
+            session_id=first.session_id,
+            message="金额还没确认，先撤回800元这个信息",
+        )
+    )
+
+    assert updated.turn_kind == "plan_update"
+    assert updated.draft is not None
+    assert "purchase_amount" not in store.require_session(
+        first.session_id
+    ).facts
+    assert provider.extraction_calls == 1
+    assert provider.continuation_calls == 1
+
+
+@pytest.mark.parametrize(
+    "continuation_fields",
+    [
+        {"facts": {"undeclared_slot": "unsafe"}},
+        {"action_refs": ["A999"]},
+        {"citation_refs": ["住房租赁条例.第十条"]},
+    ],
+    ids=["slot", "action", "cross-scenario-citation"],
+)
+def test_invalid_continuation_references_leave_case_unchanged(
+    tmp_path: Path,
+    continuation_fields: dict[str, object],
+) -> None:
+    provider = FakeProvider(
+        continuation_responses=[
+            CaseContinuationResult(
+                route="same_case",
+                scenario_id="return_refused",
+                answer="继续处理。",
+                confidence=0.99,
+                provider="fake",
+                model="fake-deterministic-v1",
+                **continuation_fields,
+            )
+        ]
+    )
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+    before = store.require_session(first.session_id)
+
+    with pytest.raises(ProviderOutputError):
+        run(
+            pipeline.consult(
+                session_id=first.session_id,
+                message="对方仍然拒绝处理",
+            )
+        )
+
+    after = store.require_session(first.session_id)
+    assert after.scenario_id == before.scenario_id
+    assert after.facts == before.facts
+    assert after.status == before.status
+    assert len(store.list_turns(first.session_id)) == 1
+    assert provider.extraction_calls == 1
+    assert provider.continuation_calls == 1
+
+
+def test_low_confidence_unsupported_new_case_is_rejected(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        continuation_responses=[
+            CaseContinuationResult(
+                route="new_case",
+                scenario_id="unsupported",
+                confidence=0.2,
+                provider="fake",
+                model="fake-deterministic-v1",
+            )
+        ]
+    )
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+    before = store.require_session(first.session_id)
+
+    with pytest.raises(ProviderOutputError):
+        run(
+            pipeline.consult(
+                session_id=first.session_id,
+                message="另外还有一件说不清的事",
+            )
+        )
+
+    after = store.require_session(first.session_id)
+    assert after.scenario_id == before.scenario_id
+    assert after.facts == before.facts
+    assert after.status == before.status
+    assert len(store.list_turns(first.session_id)) == 1
+
+
+def test_new_dispute_preserves_current_case_state(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        continuation_responses=[
+            CaseContinuationResult(
+                route="new_case",
+                scenario_id="deposit_deduction",
+                confidence=0.99,
+                provider="fake",
+                model="fake-deterministic-v1",
+            )
+        ]
+    )
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+    before = store.require_session(first.session_id)
+
+    result = run(
+        pipeline.consult(
+            session_id=first.session_id,
+            message="另外房东还扣了我的租房押金",
+        )
+    )
+    after = store.require_session(first.session_id)
+
+    assert result.turn_kind == "new_case"
+    assert result.draft is None
+    assert result.reply is not None
+    assert result.reply.new_case == {
+        "scenario_id": "deposit_deduction",
+        "label": pipeline.registry.get("deposit_deduction").name,
+    }
+    assert after.scenario_id == before.scenario_id
+    assert after.facts == before.facts
+    assert after.status == before.status
+
+
+def test_continuation_failure_keeps_prior_case_and_turns(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider()
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+    before = store.require_session(first.session_id)
+    provider._error = ProviderError(  # noqa: SLF001 - injected fault
+        "provider_timeout",
+        retryable=True,
+    )
+
+    with pytest.raises(ProviderError):
+        run(
+            pipeline.consult(
+                session_id=first.session_id,
+                message="他不配合怎么办",
+            )
+        )
+
+    after = store.require_session(first.session_id)
+    assert after.scenario_id == before.scenario_id
+    assert after.facts == before.facts
+    assert after.status == before.status
+    assert len(store.list_turns(first.session_id)) == 1
 
 
 def test_unknown_session_is_rejected(tmp_path: Path) -> None:

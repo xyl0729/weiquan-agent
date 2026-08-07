@@ -170,13 +170,9 @@ def _citations(
     if missing:
         raise ValueError("方案缺少强制法条引用: " + ", ".join(missing))
 
-    ordered_refs = [
-        *required_refs,
-        *(ref for ref in by_ref if ref not in set(required_refs)),
-    ]
     return [
         LegalCitation.from_statute(by_ref[ref])
-        for ref in ordered_refs
+        for ref in required_refs
     ]
 
 

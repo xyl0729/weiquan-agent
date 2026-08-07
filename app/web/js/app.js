@@ -38,6 +38,7 @@ const elements = {
 };
 
 const render = createRenderer({
+  continueAsNew,
   openSession,
   requestDelete,
   retryCase,
@@ -453,6 +454,15 @@ function retryCase() {
 }
 
 function startNew() {
+  resetToNewConsultation("");
+}
+
+function continueAsNew(message) {
+  resetToNewConsultation(message);
+}
+
+function resetToNewConsultation(prefill) {
+  const draft = String(prefill || "").trim();
   consultGeneration += 1;
   detailGeneration += 1;
   rememberCurrentSessionId(null);
@@ -463,7 +473,7 @@ function startNew() {
     currentSessionId: null,
     session: null,
     turns: [],
-    draftNew: "",
+    draftNew: draft,
     draftCase: "",
     busy: {
       ...state.busy,
@@ -474,7 +484,13 @@ function startNew() {
     caseError: null,
     sessionExpired: false,
   }));
-  requestAnimationFrame(() => elements.newMessage.focus());
+  requestAnimationFrame(() => {
+    elements.newMessage.focus();
+    elements.newMessage.setSelectionRange(
+      draft.length,
+      draft.length,
+    );
+  });
 }
 
 function requestDelete(session) {

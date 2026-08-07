@@ -3,6 +3,13 @@ const PIPELINE_STATUSES = new Set([
   "ready",
   "escalate",
 ]);
+const TURN_KINDS = new Set([
+  "fact_collection",
+  "initial_plan",
+  "plan_update",
+  "followup_answer",
+  "new_case",
+]);
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -260,6 +267,9 @@ function validateConsultResponse(value) {
     throw invalidResponseError();
   }
   validatePipelineStatus(payload.status);
+  if (!TURN_KINDS.has(payload.turn_kind)) {
+    throw invalidResponseError();
+  }
   validateStringArray(payload.questions);
   validateStringArray(payload.limitations);
 
@@ -276,10 +286,15 @@ function validateConsultResponse(value) {
     validatePlan(payload.plan);
   }
 
+  if (payload.reply !== null) {
+    validateReply(payload.reply);
+  }
+
   if (!Array.isArray(payload.citations)) {
     throw invalidResponseError();
   }
   payload.citations.forEach(validateCitation);
+  validateTurnCombination(payload);
 
   const usage = expectObject(payload.usage);
   expectString(usage.provider);
@@ -294,6 +309,97 @@ function validateConsultResponse(value) {
     }
   }
   return payload;
+}
+
+function validateReply(value) {
+  const reply = expectObject(value);
+  expectString(reply.text);
+  validateBoundedUniqueStringArray(reply.suggested_actions, 3);
+  validateBoundedUniqueStringArray(reply.citation_refs, 3);
+
+  if (reply.new_case !== null) {
+    const newCase = expectObject(reply.new_case);
+    const scenarioValid =
+      newCase.scenario_id === null ||
+      (
+        typeof newCase.scenario_id === "string" &&
+        newCase.scenario_id.length > 0
+      );
+    const labelValid =
+      newCase.label === null ||
+      (
+        typeof newCase.label === "string" &&
+        newCase.label.length > 0
+      );
+    if (
+      !scenarioValid ||
+      !labelValid ||
+      (newCase.scenario_id === null) !== (newCase.label === null)
+    ) {
+      throw invalidResponseError();
+    }
+  }
+}
+
+function validateTurnCombination(payload) {
+  const hasPlan =
+    payload.plan !== null && payload.verdict !== null;
+  const hasPartialPlan =
+    (payload.plan === null) !== (payload.verdict === null);
+
+  if (hasPartialPlan) {
+    throw invalidResponseError();
+  }
+  if (
+    payload.turn_kind === "fact_collection" &&
+    (
+      hasPlan ||
+      payload.reply !== null ||
+      (
+        payload.questions.length === 0 &&
+        payload.limitations.length === 0
+      )
+    )
+  ) {
+    throw invalidResponseError();
+  }
+  if (
+    ["initial_plan", "plan_update"].includes(payload.turn_kind) &&
+    (!hasPlan || payload.reply !== null)
+  ) {
+    throw invalidResponseError();
+  }
+  if (
+    payload.turn_kind === "followup_answer" &&
+    (
+      hasPlan ||
+      payload.reply === null ||
+      payload.reply.new_case !== null
+    )
+  ) {
+    throw invalidResponseError();
+  }
+  if (
+    payload.turn_kind === "new_case" &&
+    (
+      hasPlan ||
+      payload.reply === null ||
+      payload.reply.new_case === null
+    )
+  ) {
+    throw invalidResponseError();
+  }
+  if (payload.reply !== null) {
+    const publicRefs = payload.citations.map((citation) => citation.ref);
+    if (
+      payload.reply.citation_refs.length !== publicRefs.length ||
+      payload.reply.citation_refs.some(
+        (ref, index) => ref !== publicRefs[index],
+      )
+    ) {
+      throw invalidResponseError();
+    }
+  }
 }
 
 function validatePlan(value) {
@@ -348,6 +454,17 @@ function validatePipelineStatus(value) {
 
 function validateStringArray(value) {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw invalidResponseError();
+  }
+}
+
+function validateBoundedUniqueStringArray(value, maximum) {
+  validateStringArray(value);
+  if (
+    value.length > maximum ||
+    value.some((item) => item.trim().length === 0) ||
+    new Set(value).size !== value.length
+  ) {
     throw invalidResponseError();
   }
 }

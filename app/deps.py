@@ -128,7 +128,34 @@ def get_session_store(request: Request) -> SessionStore:
 def get_session_history_service(
     request: Request,
 ) -> SessionHistoryService:
-    return SessionHistoryService(get_session_store(request))
+    pipeline = getattr(
+        request.app.state,
+        "consultation_pipeline",
+        None,
+    )
+    registry = getattr(pipeline, "registry", None)
+    if not isinstance(registry, PlaybookRegistry):
+        registry = getattr(
+            request.app.state,
+            "playbook_registry",
+            None,
+        )
+    if not isinstance(registry, PlaybookRegistry):
+        settings = get_active_settings(request)
+        try:
+            registry = PlaybookRegistry.from_directory(
+                settings.playbooks_path
+            )
+        except (OSError, ValueError) as exc:
+            raise DataIntegrityError(
+                "dependency_integrity_failed",
+                "本地咨询依赖未通过完整性检查",
+            ) from exc
+        request.app.state.playbook_registry = registry
+    return SessionHistoryService(
+        get_session_store(request),
+        registry,
+    )
 
 
 def get_consultation_pipeline(request: Request) -> ConsultationPipeline:
@@ -143,6 +170,7 @@ def get_consultation_pipeline(request: Request) -> ConsultationPipeline:
             settings.playbooks_path
         )
         registry.verify_references(settings.statute_database_path)
+        request.app.state.playbook_registry = registry
         jurisdictions = JurisdictionRegistry.from_path(
             settings.jurisdiction_path
         )

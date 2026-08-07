@@ -5,7 +5,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+import pytest
+from pydantic import ValidationError
 
+from app.api.schemas import ConsultResponse
 from app.main import create_app
 from tests.test_pipeline import make_pipeline
 
@@ -26,6 +29,8 @@ def test_consult_api_followup_and_ready_response(tmp_path: Path) -> None:
     assert first.status_code == 200
     session_id = first.json()["session_id"]
     assert first.json()["status"] == "need_more_facts"
+    assert first.json()["turn_kind"] == "fact_collection"
+    assert first.json()["reply"] is None
 
     second = client.post(
         "/api/consult",
@@ -42,6 +47,8 @@ def test_consult_api_followup_and_ready_response(tmp_path: Path) -> None:
 
     assert second.status_code == 200
     assert body["status"] == "ready"
+    assert body["turn_kind"] == "initial_plan"
+    assert body["reply"] is None
     assert body["verdict"]["code"] == "deduction_lacks_stated_basis"
     assert body["plan"]["rendered_text"].startswith("【立即保全证据】")
     assert len(body["citations"]) >= 7
@@ -100,6 +107,175 @@ def test_unknown_session_maps_to_safe_422(tmp_path: Path) -> None:
         }
     }
     assert "traceback" not in response.text.casefold()
+
+
+@pytest.mark.parametrize(
+    "turn_kind",
+    [
+        "fact_collection",
+        "initial_plan",
+        "plan_update",
+        "followup_answer",
+        "new_case",
+    ],
+)
+def test_consult_response_accepts_valid_turn_kind_combinations(
+    turn_kind: str,
+) -> None:
+    payload = _response_for_turn_kind(turn_kind)
+
+    response = ConsultResponse.model_validate(payload)
+
+    assert response.turn_kind == turn_kind
+
+
+@pytest.mark.parametrize(
+    ("turn_kind", "invalid_case"),
+    [
+        ("fact_collection", "empty_collection"),
+        ("fact_collection", "unexpected_reply"),
+        ("initial_plan", "missing_plan"),
+        ("initial_plan", "unexpected_reply"),
+        ("plan_update", "missing_verdict"),
+        ("followup_answer", "missing_reply"),
+        ("followup_answer", "unexpected_plan"),
+        ("new_case", "missing_new_case"),
+    ],
+)
+def test_consult_response_rejects_invalid_turn_kind_combinations(
+    turn_kind: str,
+    invalid_case: str,
+) -> None:
+    payload = _response_for_turn_kind(turn_kind)
+    if invalid_case == "empty_collection":
+        payload.update({"questions": [], "limitations": []})
+    elif invalid_case == "unexpected_reply":
+        payload["reply"] = _reply_payload()
+    elif invalid_case == "missing_plan":
+        payload["plan"] = None
+    elif invalid_case == "missing_verdict":
+        payload["verdict"] = None
+    elif invalid_case == "missing_reply":
+        payload["reply"] = None
+    elif invalid_case == "unexpected_plan":
+        payload.update(
+            {
+                "plan": _plan_payload(),
+                "verdict": _verdict_payload(),
+            }
+        )
+    elif invalid_case == "missing_new_case":
+        payload["reply"] = _reply_payload()
+
+    with pytest.raises(ValidationError):
+        ConsultResponse.model_validate(payload)
+
+
+def test_consult_response_requires_reply_citations_to_match_top_level() -> None:
+    payload = _response_for_turn_kind("followup_answer")
+    payload["reply"] = _reply_payload(
+        citation_refs=["消费者权益保护法.第二十四条"]
+    )
+
+    with pytest.raises(ValidationError):
+        ConsultResponse.model_validate(payload)
+
+
+def _response_for_turn_kind(turn_kind: str) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "session_id": str(uuid4()),
+        "turn_id": str(uuid4()),
+        "audit_id": str(uuid4()),
+        "followup_round": 0,
+        "can_ask_more": False,
+        "status": "ready",
+        "turn_kind": turn_kind,
+        "verdict": None,
+        "plan": None,
+        "reply": None,
+        "questions": [],
+        "limitations": [],
+        "citations": [],
+        "usage": {
+            "provider": "fake",
+            "model": "fake-extractor-v1",
+            "request_id": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": None,
+        },
+    }
+    if turn_kind == "fact_collection":
+        payload.update(
+            {
+                "status": "need_more_facts",
+                "can_ask_more": True,
+                "questions": ["请补充关键事实"],
+            }
+        )
+    elif turn_kind in {"initial_plan", "plan_update"}:
+        payload.update(
+            {
+                "verdict": _verdict_payload(),
+                "plan": _plan_payload(),
+            }
+        )
+    elif turn_kind == "followup_answer":
+        payload["reply"] = _reply_payload()
+    elif turn_kind == "new_case":
+        payload["reply"] = _reply_payload(
+            text="这看起来是另一项纠纷，建议单独建立咨询。",
+            new_case={
+                "scenario_id": "return_refused",
+                "label": "退货换货被拒",
+            },
+        )
+    return payload
+
+
+def _verdict_payload() -> dict[str, object]:
+    return {
+        "code": "test_verdict",
+        "label": "测试判断",
+        "status": "ready",
+        "rule_ids": ["test_rule"],
+        "key_point": "测试判断要点",
+    }
+
+
+def _plan_payload() -> dict[str, object]:
+    return {
+        "summary": "测试方案摘要",
+        "evidence_now": ["保存现有证据"],
+        "actions": ["先书面沟通"],
+        "communication_text": "请书面说明处理结果。",
+        "limitations": [],
+        "time_limit": None,
+        "jurisdiction": {
+            "code": "CN",
+            "name": "中国大陆",
+            "status": "supported",
+            "small_claim_threshold_yuan": None,
+            "notices": [],
+        },
+        "rendered_text": "测试渲染文本",
+        "evidence_request_text": "测试证据清单",
+    }
+
+
+def _reply_payload(
+    *,
+    text: str = "先固定对方拒绝处理的证据，再按原方案推进。",
+    citation_refs: list[str] | None = None,
+    new_case: dict[str, str | None] | None = None,
+) -> dict[str, object]:
+    return {
+        "text": text,
+        "suggested_actions": [],
+        "citation_refs": citation_refs or [],
+        "new_case": new_case,
+    }
 
 
 def test_overlong_message_uses_safe_validation_error(

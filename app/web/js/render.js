@@ -28,7 +28,7 @@ export function createRenderer(actions) {
       state.turns !== previous.turns ||
       state.busy.session !== previous.busy?.session
     ) {
-      renderThread(refs, state);
+      renderThread(refs, state, actions);
       renderSummary(refs, state);
     }
     if (state.toast !== previous.toast) {
@@ -248,7 +248,7 @@ function renderHistory(refs, state, actions) {
   refs.historyList.replaceChildren(fragment);
 }
 
-function renderThread(refs, state) {
+function renderThread(refs, state, actions) {
   if (state.busy.session) {
     const loading = document.createElement("div");
     loading.className = "thread-placeholder";
@@ -269,7 +269,7 @@ function renderThread(refs, state) {
   state.turns.forEach((turn, index) => {
     fragment.append(
       renderUserMessage(turn),
-      renderAssistantMessage(turn.response, index),
+      renderAssistantMessage(turn, index, actions),
     );
   });
   refs.thread.replaceChildren(fragment);
@@ -292,10 +292,12 @@ function renderUserMessage(turn) {
   return article;
 }
 
-function renderAssistantMessage(response, index) {
+function renderAssistantMessage(turn, index, actions) {
+  const response = turn.response;
   const article = document.createElement("article");
   article.className = "message assistant-message";
   article.dataset.status = response.status;
+  article.dataset.turnKind = response.turn_kind;
 
   const rule = document.createElement("span");
   rule.className = "assistant-rule";
@@ -312,10 +314,16 @@ function renderAssistantMessage(response, index) {
   heading.append(title, round);
   content.append(heading);
 
-  if (!response.plan) {
+  if (response.turn_kind === "fact_collection") {
     appendQuestions(content, response.questions);
     appendLimitations(content, response.limitations);
-  } else {
+  } else if (
+    response.turn_kind === "initial_plan" ||
+    response.turn_kind === "plan_update"
+  ) {
+    if (response.turn_kind === "plan_update") {
+      appendPlanUpdateNotice(content);
+    }
     appendVerdict(content, response.verdict);
     appendPlan(content, response.plan);
     appendLimitations(
@@ -327,10 +335,71 @@ function renderAssistantMessage(response, index) {
       ]),
     );
     appendCitations(content, response.citations);
+  } else if (response.turn_kind === "followup_answer") {
+    appendReply(content, response.reply, response.citations);
+    appendLimitations(content, response.limitations);
+  } else if (response.turn_kind === "new_case") {
+    appendReply(content, response.reply, response.citations);
+    appendNewCaseAction(content, turn, actions);
   }
 
   article.append(rule, content);
   return article;
+}
+
+function appendPlanUpdateNotice(container) {
+  const note = document.createElement("div");
+  note.className = "plan-update-note";
+  note.append(createIcon("refresh-cw"));
+  const text = document.createElement("span");
+  text.textContent = "方案已根据新信息更新";
+  note.append(text);
+  container.append(note);
+}
+
+function appendReply(container, reply, citations) {
+  if (!reply) {
+    return;
+  }
+  const copy = document.createElement("p");
+  copy.className = "reply-copy";
+  copy.textContent = reply.text;
+  container.append(copy);
+
+  const actions = reply.suggested_actions.slice(0, 3);
+  if (actions.length > 0) {
+    appendResponseSection(
+      container,
+      "接下来可以这样做",
+      createTextList(actions, "ol", "reply-action-list"),
+    );
+  }
+  appendCitations(container, citations);
+}
+
+function appendNewCaseAction(container, turn, actions) {
+  const reply = turn.response.reply;
+  if (!reply?.new_case) {
+    return;
+  }
+  const block = document.createElement("div");
+  block.className = "new-case-block";
+  if (reply.new_case.label) {
+    const label = document.createElement("small");
+    label.textContent = `识别为：${reply.new_case.label}`;
+    block.append(label);
+  }
+  const button = document.createElement("button");
+  button.className = "new-case-action";
+  button.type = "button";
+  const text = document.createElement("span");
+  text.textContent = "作为新咨询继续";
+  button.append(text, createIcon("arrow-up-right"));
+  button.addEventListener("click", () => {
+    actions.continueAsNew(turn.user_message);
+  });
+  block.append(button);
+  container.append(block);
 }
 
 function appendQuestions(container, questions) {
@@ -482,28 +551,31 @@ function renderSummary(refs, state) {
   }
 
   const latest = latestResponse(state.turns);
+  const latestPlan = latestPlanResponse(state.turns);
   refs.summaryState.textContent = latest
     ? STATUS_LABELS[latest.status]
     : "整理中";
   const fragment = document.createDocumentFragment();
-  fragment.append(renderSummaryProgress(state.turns, latest));
   fragment.append(
-    renderFactsSummary(state.turns, latest),
+    renderSummaryProgress(state.turns, latest, latestPlan),
+  );
+  fragment.append(
+    renderFactsSummary(state.turns, latestPlan),
     renderPendingSummary(latest),
-    renderEvidenceSummary(latest),
-    renderCitationSummary(latest),
+    renderEvidenceSummary(latestPlan),
+    renderCitationSummary(latestPlan),
   );
   refs.summaryContent.replaceChildren(fragment);
 }
 
-function renderSummaryProgress(turns, latest) {
+function renderSummaryProgress(turns, latest, latestPlan) {
   const progress = document.createElement("div");
   progress.className = "summary-progress";
   const completed = [
     turns.length > 0,
     Boolean(latest && latest.questions.length === 0),
-    Boolean(latest?.plan?.evidence_now.length),
-    Boolean(latest?.citations.length),
+    Boolean(latestPlan?.plan?.evidence_now.length),
+    Boolean(latestPlan?.citations.length),
   ];
   for (const value of completed) {
     const bar = document.createElement("span");
@@ -513,12 +585,14 @@ function renderSummaryProgress(turns, latest) {
   return progress;
 }
 
-function renderFactsSummary(turns, latest) {
+function renderFactsSummary(turns, latestPlan) {
   const section = summarySection("案情事实");
-  if (latest?.plan) {
-    section.append(summaryRow("方案摘要", latest.plan.summary));
-    if (latest.verdict?.key_point) {
-      section.append(summaryRow("判断要点", latest.verdict.key_point));
+  if (latestPlan?.plan) {
+    section.append(summaryRow("方案摘要", latestPlan.plan.summary));
+    if (latestPlan.verdict?.key_point) {
+      section.append(
+        summaryRow("判断要点", latestPlan.verdict.key_point),
+      );
     }
     return section;
   }
@@ -551,9 +625,9 @@ function renderPendingSummary(latest) {
   return section;
 }
 
-function renderEvidenceSummary(latest) {
+function renderEvidenceSummary(latestPlan) {
   const section = summarySection("证据");
-  const evidence = latest?.plan?.evidence_now || [];
+  const evidence = latestPlan?.plan?.evidence_now || [];
   if (evidence.length === 0) {
     section.append(summaryEmpty("形成方案后在这里列出证据。"));
   } else {
@@ -562,9 +636,9 @@ function renderEvidenceSummary(latest) {
   return section;
 }
 
-function renderCitationSummary(latest) {
+function renderCitationSummary(latestPlan) {
   const section = summarySection("法律依据");
-  const citations = latest?.citations || [];
+  const citations = latestPlan?.citations || [];
   if (citations.length === 0) {
     section.append(summaryEmpty("尚无可展示的法律依据。"));
     return section;
@@ -713,17 +787,35 @@ function latestResponse(turns) {
   return turns.length > 0 ? turns[turns.length - 1].response : null;
 }
 
+function latestPlanResponse(turns) {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const response = turns[index].response;
+    if (response.plan && response.verdict) {
+      return response;
+    }
+  }
+  return null;
+}
+
 function assistantTitle(response) {
-  if (response.status === "ready") {
-    return "维权方案";
+  if (response.turn_kind === "fact_collection") {
+    return "还需要确认这些信息";
+  }
+  if (response.turn_kind === "plan_update") {
+    return "更新后的维权方案";
+  }
+  if (response.turn_kind === "followup_answer") {
+    return "继续处理";
+  }
+  if (response.turn_kind === "new_case") {
+    return "建议分开咨询";
   }
   if (response.status === "escalate") {
     return "需要进一步核对";
   }
-  if (response.plan) {
-    return "阶段性处理方案";
-  }
-  return "还需要确认这些信息";
+  return response.status === "ready"
+    ? "维权方案"
+    : "阶段性处理方案";
 }
 
 function firstMessageTitle(turns) {
