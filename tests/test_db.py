@@ -9,7 +9,7 @@ import pytest
 
 from app.agent.errors import SessionNotFoundError
 from app.agent.models import UsageInfo
-from app.db.session import SCHEMA_VERSION, SessionStore
+from app.db.session import BASE_SCHEMA_SQL, SCHEMA_VERSION, SessionStore
 
 
 NOW = datetime(2026, 8, 6, 12, 0, tzinfo=UTC)
@@ -47,6 +47,7 @@ def test_initialize_is_idempotent_and_sets_schema_version(
         "audit_records",
         "usage_daily",
         "rate_limit_daily",
+        "attachments",
     }.issubset(tables)
 
 
@@ -352,3 +353,136 @@ def test_list_sessions_purges_expired_records(tmp_path: Path) -> None:
     assert store.list_sessions(
         now=NOW + timedelta(hours=1)
     ) == []
+
+
+def test_real_v1_database_migrates_without_rewriting_history(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "app.db"
+    session_id = "11111111-1111-4111-8111-111111111111"
+    turn_id = "22222222-2222-4222-8222-222222222222"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(BASE_SCHEMA_SQL)
+        connection.execute(
+            """
+            INSERT INTO sessions (
+                id, scenario_id, facts_json, followup_round, status,
+                jurisdiction, created_at, updated_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                "deposit_deduction",
+                '{"deposit_amount":2000}',
+                1,
+                "need_more_facts",
+                "CN",
+                NOW.isoformat(),
+                NOW.isoformat(),
+                (NOW + timedelta(hours=72)).isoformat(),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO turns (
+                id, session_id, user_message, facts_json,
+                rule_matches_json, response_json, provider_name,
+                provider_model, provider_request_id, input_tokens,
+                output_tokens, total_tokens, estimated_cost_usd,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                turn_id,
+                session_id,
+                "房东扣了押金",
+                '{"deposit_amount":2000}',
+                "[]",
+                '{"status":"need_more_facts"}',
+                "fake",
+                "fake-local",
+                None,
+                10,
+                2,
+                12,
+                None,
+                NOW.isoformat(),
+            ),
+        )
+        before_session = connection.execute(
+            "SELECT * FROM sessions"
+        ).fetchone()
+        before_turn = connection.execute("SELECT * FROM turns").fetchone()
+        connection.execute("PRAGMA user_version = 1")
+
+    SessionStore(path, now=lambda: NOW).initialize()
+
+    with sqlite3.connect(path) as connection:
+        after_session = connection.execute(
+            "SELECT * FROM sessions"
+        ).fetchone()
+        after_turn = connection.execute("SELECT * FROM turns").fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        attachment_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(attachments)"
+            )
+        }
+    assert after_session == before_session
+    assert after_turn == before_turn
+    assert version == 2
+    assert {
+        "reservation_id",
+        "reserved_at",
+        "turn_position",
+    }.issubset(attachment_columns)
+
+
+def test_failed_v1_migration_keeps_original_version(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "app.db"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(BASE_SCHEMA_SQL)
+        connection.execute(
+            "CREATE TABLE attachments (id TEXT PRIMARY KEY)"
+        )
+        connection.execute("PRAGMA user_version = 1")
+
+    with pytest.raises(sqlite3.Error):
+        SessionStore(path, now=lambda: NOW).initialize()
+
+    with sqlite3.connect(path) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        columns = [
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(attachments)"
+            )
+        ]
+    assert version == 1
+    assert columns == ["id"]
+
+
+def test_database_from_future_version_fails_closed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "app.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE marker (value TEXT)")
+        connection.execute(
+            "INSERT INTO marker (value) VALUES ('keep-me')"
+        )
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+
+    with pytest.raises(RuntimeError, match="版本"):
+        SessionStore(path, now=lambda: NOW).initialize()
+
+    with sqlite3.connect(path) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        marker = connection.execute(
+            "SELECT value FROM marker"
+        ).fetchone()[0]
+    assert version == SCHEMA_VERSION + 1
+    assert marker == "keep-me"

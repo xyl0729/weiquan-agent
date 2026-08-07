@@ -22,8 +22,9 @@ from app.db.models import (
 )
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _UNSET = object()
+_PURGE_LIMIT = 100
 _SECRET_PATTERN = re.compile(
     r"(?i)(?:authorization\s*:\s*bearer\s+|bearer\s+)?"
     r"(sk-[A-Za-z0-9_-]{12,})"
@@ -42,7 +43,7 @@ _SENSITIVE_KEYS = {
     "token",
 }
 
-SCHEMA_SQL = """
+BASE_SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -132,6 +133,152 @@ CREATE TABLE IF NOT EXISTS rate_limit_daily (
 );
 """
 
+# Kept as a compatibility alias for callers that imported the v1 schema.
+SCHEMA_SQL = BASE_SCHEMA_SQL
+
+ATTACHMENT_SCHEMA_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_session_id
+ON turns(session_id, id);
+
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    turn_id TEXT,
+    turn_position INTEGER,
+    status TEXT NOT NULL CHECK (
+        status IN (
+            'processing',
+            'review_required',
+            'confirmed',
+            'failed',
+            'bound'
+        )
+    ),
+    original_name TEXT NOT NULL CHECK (
+        length(original_name) BETWEEN 1 AND 255
+    ),
+    media_type TEXT NOT NULL CHECK (
+        media_type IN (
+            'application/pdf',
+            'image/png',
+            'image/jpeg'
+        )
+    ),
+    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+    sha256 TEXT NOT NULL CHECK (
+        length(sha256) = 64
+        AND sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    page_count INTEGER CHECK (
+        page_count IS NULL OR page_count >= 1
+    ),
+    extraction_method TEXT CHECK (
+        extraction_method IS NULL
+        OR extraction_method IN ('direct_text', 'ocr', 'mixed')
+    ),
+    extracted_blocks_json TEXT NOT NULL DEFAULT '[]',
+    confirmed_text TEXT,
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    error_code TEXT,
+    reservation_id TEXT,
+    reserved_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    expires_at TEXT,
+    CHECK (
+        (
+            status = 'bound'
+            AND session_id IS NOT NULL
+            AND turn_id IS NOT NULL
+            AND turn_position IS NOT NULL
+            AND reservation_id IS NULL
+            AND reserved_at IS NULL
+            AND expires_at IS NULL
+        )
+        OR
+        (
+            status <> 'bound'
+            AND session_id IS NULL
+            AND turn_id IS NULL
+            AND expires_at IS NOT NULL
+            AND (
+                (
+                    reservation_id IS NULL
+                    AND reserved_at IS NULL
+                    AND turn_position IS NULL
+                )
+                OR
+                (
+                    status = 'confirmed'
+                    AND reservation_id IS NOT NULL
+                    AND reserved_at IS NOT NULL
+                    AND turn_position IS NOT NULL
+                )
+            )
+        )
+    ),
+    CHECK (
+        (
+            status IN ('review_required', 'confirmed', 'bound')
+            AND page_count IS NOT NULL
+            AND extraction_method IS NOT NULL
+            AND extracted_blocks_json <> '[]'
+        )
+        OR
+        (
+            status IN ('processing', 'failed')
+            AND page_count IS NULL
+            AND extraction_method IS NULL
+            AND extracted_blocks_json = '[]'
+        )
+    ),
+    CHECK (
+        (
+            status IN ('confirmed', 'bound')
+            AND confirmed_text IS NOT NULL
+            AND length(trim(confirmed_text)) > 0
+        )
+        OR
+        (
+            status IN ('processing', 'review_required', 'failed')
+            AND confirmed_text IS NULL
+        )
+    ),
+    CHECK (
+        (status = 'failed' AND error_code IS NOT NULL)
+        OR
+        (status <> 'failed' AND error_code IS NULL)
+    ),
+    CHECK (
+        turn_position IS NULL
+        OR turn_position BETWEEN 0 AND 2
+    ),
+    FOREIGN KEY (session_id)
+        REFERENCES sessions(id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (turn_id)
+        REFERENCES turns(id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (session_id, turn_id)
+        REFERENCES turns(session_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_expires_at
+ON attachments(expires_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_reservation_position
+ON attachments(reservation_id, turn_position)
+WHERE reservation_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_attachments_turn
+ON attachments(turn_id, turn_position);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_turn_position
+ON attachments(turn_id, turn_position)
+WHERE turn_id IS NOT NULL;
+"""
+
 
 class SessionStore:
     def __init__(
@@ -149,9 +296,39 @@ class SessionStore:
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
-            connection.executescript(SCHEMA_SQL)
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection = sqlite3.connect(self.path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 5000")
+        try:
+            version = int(
+                connection.execute("PRAGMA user_version").fetchone()[0]
+            )
+            if version > SCHEMA_VERSION:
+                raise RuntimeError("数据库 schema 版本高于当前程序")
+            if version == SCHEMA_VERSION:
+                return
+            if version == 0 and self._has_user_tables(connection):
+                raise RuntimeError("未识别的数据库 schema 版本")
+            if version not in {0, 1}:
+                raise RuntimeError("不支持的数据库 schema 版本")
+
+            schema = BASE_SCHEMA_SQL if version == 0 else ""
+            script = "\n".join(
+                (
+                    "BEGIN IMMEDIATE;",
+                    schema,
+                    ATTACHMENT_SCHEMA_SQL,
+                    f"PRAGMA user_version = {SCHEMA_VERSION};",
+                )
+            )
+            connection.executescript(script)
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def create_session(
         self,
@@ -431,6 +608,112 @@ class SessionStore:
             ).fetchone()
         return _turn_from_row(_required_row(row))
 
+    def persist_session_turn(
+        self,
+        session_id: str,
+        *,
+        scenario_id: str | None,
+        facts: Mapping[str, Any],
+        followup_round: int,
+        status: str,
+        jurisdiction: str | None,
+        user_message: str,
+        rule_matches: Sequence[Mapping[str, Any]],
+        response: Mapping[str, Any],
+        provider_name: str | None = None,
+        provider_model: str | None = None,
+        provider_request_id: str | None = None,
+        usage: UsageInfo | None = None,
+        now: datetime | None = None,
+        turn_id: str | None = None,
+        attachment_binder: Callable[
+            [sqlite3.Connection, str, str],
+            object,
+        ]
+        | None = None,
+    ) -> TurnRecord:
+        normalized_session_id = _uuid(session_id)
+        normalized_turn_id = _uuid(turn_id)
+        current = self._utc(now)
+        normalized_round = int(followup_round)
+        if not 0 <= normalized_round <= 2:
+            raise ValueError("followup_round 必须在 0 到 2 之间")
+        normalized_status = _session_status(status)
+        normalized_scenario = _optional_text(scenario_id, 100)
+        normalized_jurisdiction = _optional_text(jurisdiction, 100)
+        safe_facts = dict(facts)
+        facts_json = _json(safe_facts)
+        matches_json = _json([dict(item) for item in rule_matches])
+        response_json = _json(dict(response))
+        safe_message = _redact_text(user_message.strip())
+        if not safe_message:
+            raise ValueError("user_message 不能为空")
+        normalized_usage = usage or UsageInfo()
+
+        with self.transaction(immediate=True) as connection:
+            self._require_active(
+                connection,
+                normalized_session_id,
+                current,
+            )
+            connection.execute(
+                """
+                UPDATE sessions
+                SET scenario_id = ?, facts_json = ?, followup_round = ?,
+                    status = ?, jurisdiction = ?, updated_at = ?,
+                    expires_at = ?
+                WHERE id = ?
+                """,
+                (
+                    normalized_scenario,
+                    facts_json,
+                    normalized_round,
+                    normalized_status,
+                    normalized_jurisdiction,
+                    _iso(current),
+                    _iso(current + self.ttl),
+                    normalized_session_id,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO turns (
+                    id, session_id, user_message, facts_json,
+                    rule_matches_json, response_json, provider_name,
+                    provider_model, provider_request_id, input_tokens,
+                    output_tokens, total_tokens, estimated_cost_usd,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_turn_id,
+                    normalized_session_id,
+                    safe_message,
+                    facts_json,
+                    matches_json,
+                    response_json,
+                    _optional_text(provider_name, 50),
+                    _optional_text(provider_model, 200),
+                    _optional_text(provider_request_id, 200),
+                    normalized_usage.input_tokens,
+                    normalized_usage.output_tokens,
+                    normalized_usage.total_tokens,
+                    normalized_usage.estimated_cost_usd,
+                    _iso(current),
+                ),
+            )
+            if attachment_binder is not None:
+                attachment_binder(
+                    connection,
+                    normalized_session_id,
+                    normalized_turn_id,
+                )
+            row = connection.execute(
+                "SELECT * FROM turns WHERE id = ?",
+                (normalized_turn_id,),
+            ).fetchone()
+        return _turn_from_row(_required_row(row))
+
     def list_turns(self, session_id: str) -> list[TurnRecord]:
         normalized_session_id = _uuid(session_id)
         with self._connect() as connection:
@@ -670,15 +953,43 @@ class SessionStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        with self.transaction() as connection:
+            yield connection
+
+    @contextmanager
+    def transaction(
+        self,
+        *,
+        immediate: bool = False,
+    ) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
         try:
-            with connection:
-                yield connection
+            connection.execute(
+                "BEGIN IMMEDIATE" if immediate else "BEGIN"
+            )
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _has_user_tables(connection: sqlite3.Connection) -> bool:
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name NOT LIKE 'sqlite_%'
+            LIMIT 1
+            """
+        ).fetchone()
+        return row is not None
 
     def _utc(self, value: datetime | None) -> datetime:
         current = value or self._now()
@@ -690,10 +1001,38 @@ class SessionStore:
         self,
         connection: sqlite3.Connection,
         now: datetime,
+        *,
+        limit: int = _PURGE_LIMIT,
     ) -> int:
+        if limit <= 0:
+            return 0
+        current = _iso(now)
         cursor = connection.execute(
-            "DELETE FROM sessions WHERE expires_at <= ?",
-            (_iso(now),),
+            """
+            DELETE FROM sessions
+            WHERE id IN (
+                SELECT id
+                FROM sessions
+                WHERE expires_at <= ?
+                ORDER BY expires_at, id
+                LIMIT ?
+            )
+            """,
+            (current, limit),
+        )
+        connection.execute(
+            """
+            DELETE FROM attachments
+            WHERE id IN (
+                SELECT id
+                FROM attachments
+                WHERE session_id IS NULL
+                  AND expires_at <= ?
+                ORDER BY expires_at, id
+                LIMIT ?
+            )
+            """,
+            (current, limit),
         )
         return max(cursor.rowcount, 0)
 

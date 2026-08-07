@@ -53,7 +53,7 @@ _PROCESSING_FAILURE_CODES = frozenset(
 )
 
 
-def _validate_original_name(value: str) -> str:
+def validate_attachment_name(value: str) -> str:
     if not value.strip():
         raise ValueError("文件名不能为空")
     if len(value) > 255:
@@ -63,7 +63,7 @@ def _validate_original_name(value: str) -> str:
     return value
 
 
-def _validate_confirmed_text(value: str | None) -> str | None:
+def normalize_confirmed_text(value: str | None) -> str | None:
     if value is None:
         return None
     normalized = value.strip()
@@ -161,12 +161,12 @@ class AttachmentReviewPublic(BaseModel):
     @field_validator("original_name")
     @classmethod
     def original_name_is_safe(cls, value: str) -> str:
-        return _validate_original_name(value)
+        return validate_attachment_name(value)
 
     @field_validator("confirmed_text")
     @classmethod
     def confirmed_text_is_valid(cls, value: str | None) -> str | None:
-        return _validate_confirmed_text(value)
+        return normalize_confirmed_text(value)
 
     @field_validator("warnings")
     @classmethod
@@ -232,12 +232,12 @@ class AttachmentTurnPublic(BaseModel):
     @field_validator("original_name")
     @classmethod
     def original_name_is_safe(cls, value: str) -> str:
-        return _validate_original_name(value)
+        return validate_attachment_name(value)
 
     @field_validator("confirmed_text")
     @classmethod
     def confirmed_text_is_valid(cls, value: str) -> str:
-        normalized = _validate_confirmed_text(value)
+        normalized = normalize_confirmed_text(value)
         assert normalized is not None
         return normalized
 
@@ -262,11 +262,11 @@ class AttachmentEvidenceContext(BaseModel):
     @field_validator("original_name")
     @classmethod
     def original_name_is_safe(cls, value: str) -> str:
-        return _validate_original_name(value)
+        return validate_attachment_name(value)
 
     @field_validator("confirmed_text")
     @classmethod
     def confirmed_text_is_valid(cls, value: str) -> str:
-        normalized = _validate_confirmed_text(value)
+        normalized = normalize_confirmed_text(value)
         assert normalized is not None
         return normalized
