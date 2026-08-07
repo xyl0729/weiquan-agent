@@ -557,6 +557,39 @@ class AttachmentStore:
             )
         return max(cursor.rowcount, 0)
 
+    def fail_stale_processing(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> int:
+        if limit <= 0:
+            raise ValueError("limit 必须大于 0")
+        current = self._utc(now)
+        with self.sessions.transaction(immediate=True) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE attachments
+                SET status = 'failed',
+                    page_count = NULL,
+                    extraction_method = NULL,
+                    extracted_blocks_json = '[]',
+                    confirmed_text = NULL,
+                    warnings_json = '[]',
+                    error_code = 'attachment_service_unavailable',
+                    updated_at = ?
+                WHERE id IN (
+                    SELECT id
+                    FROM attachments
+                    WHERE status = 'processing'
+                    ORDER BY created_at, id
+                    LIMIT ?
+                )
+                """,
+                (_iso(current), int(limit)),
+            )
+        return max(cursor.rowcount, 0)
+
     @staticmethod
     def _require_record(
         connection: sqlite3.Connection,
