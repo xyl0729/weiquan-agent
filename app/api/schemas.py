@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.attachments.models import AttachmentTurnPublic
 from app.jurisdiction.schema import TimeLimitResult
 
 
@@ -36,6 +37,10 @@ class ConsultRequest(BaseModel):
     session_id: UUID | None = None
     message: str = Field(min_length=1, max_length=20000)
     jurisdiction: str | None = Field(default=None, max_length=100)
+    attachment_ids: list[UUID] = Field(
+        default_factory=list,
+        max_length=3,
+    )
 
     @field_validator("message")
     @classmethod
@@ -52,6 +57,16 @@ class ConsultRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def attachment_ids_are_unique(
+        cls,
+        values: list[UUID],
+    ) -> list[UUID]:
+        if len(values) != len(set(values)):
+            raise ValueError("附件 ID 不得重复")
+        return values
 
 
 class VerdictResponse(BaseModel):
@@ -182,6 +197,10 @@ class ConsultResponse(BaseModel):
     questions: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
+    attachments: list[AttachmentTurnPublic] = Field(
+        default_factory=list,
+        max_length=3,
+    )
     usage: UsageResponse
 
     @model_validator(mode="after")

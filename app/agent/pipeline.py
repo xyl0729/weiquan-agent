@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from time import perf_counter
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.agent.errors import (
     DataIntegrityError,
@@ -25,8 +26,15 @@ from app.agent.models import (
     TurnKind,
     UsageInfo,
 )
+from app.attachments.context import EvidenceContextBuilder
+from app.attachments.errors import AttachmentResourceLimitError
+from app.attachments.models import (
+    AttachmentEvidenceContext,
+    AttachmentTurnPublic,
+)
+from app.attachments.store import AttachmentStore
 from app.config import Settings
-from app.db.models import SessionRecord, TurnRecord
+from app.db.models import AttachmentRecord, SessionRecord, TurnRecord
 from app.db.session import SessionStore
 from app.jurisdiction.rules import (
     JurisdictionRegistry,
@@ -112,6 +120,7 @@ class PipelineResult:
     rendered: RenderedDocuments | None = None
     reply: PipelineReply | None = None
     reply_citations: tuple[LegalCitation, ...] = ()
+    attachments: tuple[AttachmentTurnPublic, ...] = ()
 
     def public_payload(self) -> dict[str, Any]:
         verdict: dict[str, Any] | None = None
@@ -175,6 +184,10 @@ class PipelineResult:
             "questions": list(self.questions),
             "limitations": list(self.limitations),
             "citations": citations,
+            "attachments": [
+                attachment.model_dump(mode="json")
+                for attachment in self.attachments
+            ],
             "usage": {
                 "provider": self.provider_name,
                 "model": self.provider_model,
@@ -209,6 +222,8 @@ class _RunState:
     stage_started: float = field(default_factory=perf_counter)
     session: SessionRecord | None = None
     playbook: Playbook | None = None
+    attachment_ids: tuple[str, ...] = ()
+    reservation_id: str | None = None
 
     def begin(self, stage: str) -> None:
         self.active_stage = stage
@@ -241,6 +256,7 @@ class ConsultationPipeline:
         *,
         settings: Settings,
         store: SessionStore,
+        attachments: AttachmentStore,
         registry: PlaybookRegistry,
         provider: LLMProvider,
         jurisdictions: JurisdictionRegistry,
@@ -249,6 +265,12 @@ class ConsultationPipeline:
     ) -> None:
         self.settings = settings
         self.store = store
+        self.attachments = attachments
+        self.evidence_context = EvidenceContextBuilder(
+            attachments,
+            max_attachments=settings.max_attachments_per_turn,
+            max_context_chars=settings.max_attachment_context_chars,
+        )
         self.registry = registry
         self.provider = provider
         self.jurisdictions = jurisdictions
@@ -262,15 +284,29 @@ class ConsultationPipeline:
         session_id: str | None = None,
         jurisdiction: str | None = None,
         client_identifier: str = "local",
+        attachment_ids: Sequence[str] = (),
     ) -> PipelineResult:
         run = _RunState()
         audit_id = str(uuid4())
         turn_id = str(uuid4())
         extraction: ExtractionResult | None = None
+        evidence: tuple[AttachmentEvidenceContext, ...] = ()
         turns: list[TurnRecord] = []
         try:
             normalized_message = self._validate_message(message)
             normalized_jurisdiction = _optional_text(jurisdiction)
+            run.attachment_ids = _attachment_ids(
+                attachment_ids,
+                max_attachments=self.settings.max_attachments_per_turn,
+            )
+            if run.attachment_ids:
+                run.reservation_id = self.attachments.reserve(
+                    run.attachment_ids
+                )
+                evidence = self.evidence_context.build(
+                    run.attachment_ids,
+                    reservation_id=run.reservation_id,
+                )
             run.finish()
 
             run.begin("session")
@@ -321,6 +357,7 @@ class ConsultationPipeline:
                     client_identifier=client_identifier,
                     turn_id=turn_id,
                     audit_id=audit_id,
+                    evidence=evidence,
                 )
 
             run.begin("extraction")
@@ -329,6 +366,7 @@ class ConsultationPipeline:
             extraction = await self.provider.extract_facts(
                 normalized_message,
                 context,
+                evidence,
             )
             self._verify_provider_identity(extraction)
             if self.usage_controls is not None:
@@ -459,6 +497,9 @@ class ConsultationPipeline:
             )
             self._persist_failure(run, audit_id, safe_error.code)
             raise safe_error from exc
+        finally:
+            if run.reservation_id is not None:
+                self.attachments.release(run.reservation_id)
 
     async def _continue_existing_case(
         self,
@@ -470,6 +511,7 @@ class ConsultationPipeline:
         client_identifier: str,
         turn_id: str,
         audit_id: str,
+        evidence: tuple[AttachmentEvidenceContext, ...],
     ) -> PipelineResult:
         if run.session is None or run.playbook is None:
             raise RuntimeError("案件续问缺少当前会话或场景")
@@ -490,7 +532,11 @@ class ConsultationPipeline:
         run.begin("case_continuation")
         if self.usage_controls is not None:
             self.usage_controls.before_call(client_identifier)
-        continuation = await self.provider.continue_case(message, context)
+        continuation = await self.provider.continue_case(
+            message,
+            context,
+            evidence,
+        )
         self._verify_provider_identity(continuation)
         if self.usage_controls is not None:
             continuation = continuation.model_copy(
@@ -548,6 +594,7 @@ class ConsultationPipeline:
                 facts=run.session.facts,
                 rule_matches=[],
                 jurisdiction=run.session.jurisdiction,
+                bind_attachments=False,
             )
 
         if continuation.scenario_id != run.playbook.id:
@@ -999,32 +1046,54 @@ class ConsultationPipeline:
         facts: dict[str, Any],
         rule_matches: list[dict[str, Any]],
         jurisdiction: str | None,
+        bind_attachments: bool = True,
     ) -> PipelineResult:
         if run.session is None:
             raise RuntimeError("持久化前缺少会话")
 
+        attachment_binder = None
+        if bind_attachments and run.attachment_ids:
+            if run.reservation_id is None:
+                raise RuntimeError("附件绑定前缺少有效预留")
+            attachment_binder = self.attachments.reservation_binder(
+                run.reservation_id,
+                expected_ids=run.attachment_ids,
+            )
+
         run.begin("persistence")
-        self.store.update_session(
+        stored_result = replace(result, attachments=())
+        self.store.persist_session_turn(
             run.session.id,
             scenario_id=result.scenario_id,
             facts=facts,
             followup_round=result.followup_round,
             status=result.status,
             jurisdiction=jurisdiction,
-        )
-        self.store.add_turn(
-            run.session.id,
             turn_id=result.turn_id,
             user_message=message,
-            facts=facts,
             rule_matches=rule_matches,
-            response=result.public_payload(),
+            response=stored_result.public_payload(),
             provider_name=result.provider_name,
             provider_model=result.provider_model,
             provider_request_id=result.provider_request_id,
             usage=result.usage,
+            attachment_binder=attachment_binder,
         )
         run.finish()
+
+        public_attachments: tuple[AttachmentTurnPublic, ...] = ()
+        if attachment_binder is not None:
+            public_attachments = tuple(
+                _attachment_turn_public(record)
+                for record in self.attachments.list_for_turn(
+                    result.turn_id
+                )
+            )
+        public_result = replace(
+            result,
+            attachments=public_attachments,
+        )
+
         run.begin("response")
         run.finish()
 
@@ -1041,7 +1110,7 @@ class ConsultationPipeline:
                 citations=event.citations,
                 error_category=event.error_category,
             )
-        return result
+        return public_result
 
     def _persist_failure(
         self,
@@ -1117,3 +1186,48 @@ def _optional_text(value: str | None) -> str | None:
     if len(normalized) > 100:
         raise RequestInputError("jurisdiction 长度不能超过 100")
     return normalized
+
+
+def _attachment_ids(
+    values: Sequence[str],
+    *,
+    max_attachments: int,
+) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes, bytearray)):
+        raise RequestInputError("附件 ID 必须是列表")
+    if len(values) > max_attachments:
+        raise AttachmentResourceLimitError(
+            "attachment_count_exceeded"
+        )
+    try:
+        normalized = tuple(str(UUID(str(value))) for value in values)
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise RequestInputError("附件 ID 必须是有效 UUID") from exc
+    if len(normalized) != len(set(normalized)):
+        raise RequestInputError("附件 ID 不得重复")
+    return normalized
+
+
+def _attachment_turn_public(
+    record: AttachmentRecord,
+) -> AttachmentTurnPublic:
+    if (
+        record.status != "bound"
+        or record.page_count is None
+        or record.extraction_method is None
+        or record.confirmed_text is None
+    ):
+        raise DataIntegrityError(
+            "attachment_projection_invalid",
+            "附件公开信息完整性检查失败",
+        )
+    return AttachmentTurnPublic(
+        id=record.id,
+        original_name=record.original_name,
+        media_type=record.media_type,
+        size_bytes=record.size_bytes,
+        page_count=record.page_count,
+        extraction_method=record.extraction_method,
+        warnings=record.warnings,
+        confirmed_text=record.confirmed_text,
+    )

@@ -20,7 +20,7 @@ from app.limits.usage import (
     UsageTracker,
 )
 from app.providers.fake import FakeProvider
-from tests.test_pipeline import make_pipeline
+from tests.test_pipeline import create_confirmed_attachment, make_pipeline
 
 
 class Clock:
@@ -216,14 +216,21 @@ def test_pipeline_checks_real_provider_limit_before_call(
         )
     )
     assert first.usage.estimated_cost_usd == pytest.approx(0)
+    attachment_id = create_confirmed_attachment(pipeline)
 
     with pytest.raises(RateLimitError):
         asyncio.run(
             pipeline.consult(
                 message="房东不退押金",
                 client_identifier="127.0.0.1",
+                attachment_ids=[attachment_id],
             )
         )
+
+    restored = pipeline.attachments.get(attachment_id)
+    assert restored.status == "confirmed"
+    assert restored.reservation_id is None
+    assert restored.turn_id is None
 
 
 def test_continuation_records_one_call_and_one_usage_entry(

@@ -135,12 +135,21 @@ def initialize_attachment_dependencies(
     application: FastAPI,
 ) -> tuple[AttachmentStore, AttachmentService]:
     settings: Settings = application.state.settings
+    pipeline = getattr(
+        application.state,
+        "consultation_pipeline",
+        None,
+    )
+    pipeline_store = getattr(pipeline, "attachments", None)
     existing_store = getattr(
         application.state,
         "attachment_store",
         None,
     )
-    if isinstance(existing_store, AttachmentStore):
+    if isinstance(pipeline_store, AttachmentStore):
+        store = pipeline_store
+        application.state.attachment_store = store
+    elif isinstance(existing_store, AttachmentStore):
         store = existing_store
     else:
         store = AttachmentStore(
@@ -229,6 +238,9 @@ def get_consultation_pipeline(request: Request) -> ConsultationPipeline:
     settings = get_active_settings(request)
     try:
         store = get_session_store(request)
+        attachments, _ = initialize_attachment_dependencies(
+            request.app
+        )
         registry = PlaybookRegistry.from_directory(
             settings.playbooks_path
         )
@@ -274,6 +286,7 @@ def get_consultation_pipeline(request: Request) -> ConsultationPipeline:
     pipeline = ConsultationPipeline(
         settings=settings,
         store=store,
+        attachments=attachments,
         registry=registry,
         provider=provider,
         jurisdictions=jurisdictions,

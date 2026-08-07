@@ -14,7 +14,7 @@ from app.attachments.errors import AttachmentInputError
 from app.attachments.models import ExtractionBlock, ExtractionResult
 from app.attachments.service import AttachmentService
 from app.attachments.store import AttachmentStore
-from app.api.schemas import ConsultResponse
+from app.api.schemas import ConsultRequest, ConsultResponse
 from app.main import create_app
 from tests.test_pipeline import make_pipeline
 
@@ -60,17 +60,14 @@ def make_attachment_client(
     ocr_ready: bool = True,
     max_context_chars: int = 12_000,
 ) -> tuple[TestClient, object, AttachmentStore, ApiExtractionWorker]:
-    pipeline, sessions = make_pipeline(tmp_path)
+    pipeline, _ = make_pipeline(tmp_path)
     settings = pipeline.settings.model_copy(
         update={
             "attachment_temp_dir": tmp_path / "attachment-jobs",
             "max_attachment_context_chars": max_context_chars,
         }
     )
-    attachments = AttachmentStore(
-        sessions,
-        draft_ttl_seconds=settings.attachment_draft_ttl_seconds,
-    )
+    attachments = pipeline.attachments
     active_worker = worker or ApiExtractionWorker()
     service = AttachmentService(
         attachments,
@@ -125,6 +122,7 @@ def test_consult_api_followup_and_ready_response(tmp_path: Path) -> None:
     assert first.json()["status"] == "need_more_facts"
     assert first.json()["turn_kind"] == "fact_collection"
     assert first.json()["reply"] is None
+    assert first.json()["attachments"] == []
 
     second = client.post(
         "/api/consult",
@@ -146,6 +144,7 @@ def test_consult_api_followup_and_ready_response(tmp_path: Path) -> None:
     assert body["verdict"]["code"] == "deduction_lacks_stated_basis"
     assert body["plan"]["rendered_text"].startswith("【立即保全证据】")
     assert len(body["citations"]) >= 7
+    assert body["attachments"] == []
     assert body["usage"]["provider"] == "fake"
     assert "api_key" not in second.text.casefold()
     assert "authorization" not in second.text.casefold()
@@ -221,6 +220,61 @@ def test_consult_response_accepts_valid_turn_kind_combinations(
     response = ConsultResponse.model_validate(payload)
 
     assert response.turn_kind == turn_kind
+    assert response.attachments == []
+
+
+def test_consult_request_attachment_ids_default_and_validation() -> None:
+    request = ConsultRequest(message="房东不退押金")
+    attachment_id = uuid4()
+
+    assert request.attachment_ids == []
+
+    with pytest.raises(ValidationError):
+        ConsultRequest(
+            message="房东不退押金",
+            attachment_ids=[attachment_id, attachment_id],
+        )
+    with pytest.raises(ValidationError):
+        ConsultRequest(
+            message="房东不退押金",
+            attachment_ids=[uuid4() for _ in range(4)],
+        )
+    with pytest.raises(ValidationError):
+        ConsultRequest(
+            message="房东不退押金",
+            attachment_ids=["not-a-uuid"],
+        )
+
+
+@pytest.mark.parametrize(
+    "attachment_ids",
+    [
+        ["not-a-uuid"],
+        [str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4())],
+    ],
+)
+def test_consult_api_rejects_invalid_attachment_ids(
+    tmp_path: Path,
+    attachment_ids: list[str],
+) -> None:
+    pipeline, _ = make_pipeline(tmp_path)
+    client = TestClient(
+        create_app(
+            pipeline.settings,
+            pipeline=pipeline,
+        )
+    )
+
+    response = client.post(
+        "/api/consult",
+        json={
+            "message": "房东不退押金",
+            "attachment_ids": attachment_ids,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "request_validation"
 
 
 @pytest.mark.parametrize(
@@ -494,6 +548,58 @@ def test_attachment_api_upload_review_confirm_delete_and_cors(
     assert deleted_again.status_code == 204
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "attachment_not_found"
+
+
+def test_confirmed_upload_can_be_used_by_consultation(
+    tmp_path: Path,
+) -> None:
+    client, application, attachments, _ = make_attachment_client(
+        tmp_path
+    )
+    uploaded = upload_pdf(client)
+    attachment_id = uploaded.json()["id"]
+    confirmed = client.patch(
+        f"/api/attachments/{attachment_id}",
+        json={"confirmed_text": "平台订单金额299元"},
+    )
+
+    response = client.post(
+        "/api/consult",
+        json={
+            "message": (
+                "押金2000元，房东扣2000元，没理由，"
+                "合同没写可以扣。"
+            ),
+            "attachment_ids": [attachment_id],
+        },
+    )
+
+    assert confirmed.status_code == 200
+    assert response.status_code == 200
+    body = response.json()
+    assert body["turn_kind"] == "initial_plan"
+    assert body["attachments"] == [
+        {
+            "id": attachment_id,
+            "status": "bound",
+            "original_name": "invoice.pdf",
+            "media_type": "application/pdf",
+            "size_bytes": len(b"%PDF-1.7\nsafe api fixture"),
+            "page_count": 1,
+            "extraction_method": "direct_text",
+            "warnings": ["review_amount"],
+            "confirmed_text": "平台订单金额299元",
+        }
+    ]
+    assert [
+        item.id for item in attachments.list_for_turn(body["turn_id"])
+    ] == [attachment_id]
+    stored_turn = attachments.sessions.list_turns(body["session_id"])[0]
+    assert stored_turn.response["attachments"] == []
+    assert (
+        application.state.attachment_store
+        is application.state.consultation_pipeline.attachments
+    )
 
 
 def test_attachment_api_returns_safe_failed_public_object(

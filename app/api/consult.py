@@ -36,5 +36,9 @@ async def consult(
         ),
         jurisdiction=payload.jurisdiction,
         client_identifier=request_client_ip(request),
+        attachment_ids=[
+            str(attachment_id)
+            for attachment_id in payload.attachment_ids
+        ],
     )
     return ConsultResponse.model_validate(result.public_payload())

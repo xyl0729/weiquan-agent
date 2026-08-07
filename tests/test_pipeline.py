@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,6 +15,15 @@ from app.agent.errors import (
 )
 from app.agent.models import CaseContinuationResult
 from app.agent.pipeline import PIPELINE_STAGES, ConsultationPipeline
+from app.attachments.errors import (
+    AttachmentResourceLimitError,
+    AttachmentStateConflictError,
+)
+from app.attachments.models import (
+    ExtractionBlock,
+    ExtractionResult as AttachmentExtractionResult,
+)
+from app.attachments.store import AttachmentStore
 from app.config import Settings
 from app.db.session import SessionStore
 from app.jurisdiction.rules import JurisdictionRegistry
@@ -51,9 +61,14 @@ def make_pipeline(
         ttl_hours=settings.session_ttl_hours,
     )
     store.initialize()
+    attachments = AttachmentStore(
+        store,
+        draft_ttl_seconds=settings.attachment_draft_ttl_seconds,
+    )
     pipeline = ConsultationPipeline(
         settings=settings,
         store=store,
+        attachments=attachments,
         registry=PlaybookRegistry.from_directory(
             PROJECT_ROOT / "app" / "playbooks"
         ),
@@ -67,6 +82,38 @@ def make_pipeline(
         usage_controls=usage_controls,
     )
     return pipeline, store
+
+
+def create_confirmed_attachment(
+    pipeline: ConsultationPipeline,
+    *,
+    text: str = "订单金额 299 元",
+    name: str = "证据.pdf",
+) -> str:
+    processing = pipeline.attachments.create_processing(
+        original_name=name,
+        media_type="application/pdf",
+        size_bytes=1024,
+        sha256="a" * 64,
+    )
+    pipeline.attachments.save_extraction(
+        processing.id,
+        AttachmentExtractionResult(
+            media_type="application/pdf",
+            page_count=1,
+            extraction_method="direct_text",
+            blocks=(
+                ExtractionBlock(
+                    page_number=1,
+                    block_index=0,
+                    text=text,
+                    confidence=0.98,
+                ),
+            ),
+            warnings=("review_amount",),
+        ),
+    )
+    return pipeline.attachments.confirm(processing.id, text).id
 
 
 def test_followup_then_ready_plan_uses_all_fixed_stages(
@@ -587,3 +634,363 @@ def test_missing_statute_database_fails_closed(tmp_path: Path) -> None:
                 )
             )
         )
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_turn_kind"),
+    [
+        ("房东不退押金", "fact_collection"),
+        (
+            "押金2000元，房东扣2000元，没理由，合同没写可以扣。",
+            "initial_plan",
+        ),
+    ],
+)
+def test_new_consultation_attachment_uses_extraction_and_binds_turn(
+    tmp_path: Path,
+    message: str,
+    expected_turn_kind: str,
+) -> None:
+    provider = FakeProvider()
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    private_ocr_text = "OCR_PRIVATE_BODY_订单金额299元"
+    attachment_id = create_confirmed_attachment(
+        pipeline,
+        text=private_ocr_text,
+    )
+
+    result = run(
+        pipeline.consult(
+            message=message,
+            attachment_ids=[attachment_id],
+        )
+    )
+
+    assert result.turn_kind == expected_turn_kind
+    assert provider.extraction_calls == 1
+    assert provider.continuation_calls == 0
+    assert len(provider.extraction_evidence_calls) == 1
+    assert [
+        str(item.id) for item in provider.extraction_evidence_calls[0]
+    ] == [attachment_id]
+    assert provider.continuation_evidence_calls == []
+    assert [str(item.id) for item in result.attachments] == [attachment_id]
+    assert result.attachments[0].confirmed_text == private_ocr_text
+
+    bound = pipeline.attachments.list_for_turn(result.turn_id)
+    assert [item.id for item in bound] == [attachment_id]
+    assert bound[0].status == "bound"
+
+    stored_turn = store.list_turns(result.session_id)[0]
+    assert stored_turn.user_message == message
+    assert stored_turn.response["attachments"] == []
+    assert private_ocr_text not in json.dumps(
+        stored_turn.model_dump(mode="json"),
+        ensure_ascii=False,
+    )
+    assert private_ocr_text not in json.dumps(
+        [
+            item.model_dump(mode="json")
+            for item in store.list_audit_records(
+                audit_id=result.audit_id
+            )
+        ],
+        ensure_ascii=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "expected_turn_kind",
+    ["followup_answer", "plan_update"],
+)
+def test_existing_plan_attachment_uses_only_continuation_and_binds_turn(
+    tmp_path: Path,
+    expected_turn_kind: str,
+) -> None:
+    continuation_responses = None
+    if expected_turn_kind == "plan_update":
+        continuation_responses = [
+            CaseContinuationResult(
+                route="same_case",
+                scenario_id="return_refused",
+                facts={"purchase_amount": 1200},
+                answer="金额已经补充。",
+                confidence=0.99,
+                provider="fake",
+                model="fake-deterministic-v1",
+            )
+        ]
+    provider = FakeProvider(
+        continuation_responses=continuation_responses
+    )
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+    attachment_id = create_confirmed_attachment(
+        pipeline,
+        text="平台拒绝退款记录",
+    )
+
+    result = run(
+        pipeline.consult(
+            session_id=first.session_id,
+            message=(
+                "商品价款更正为1200元"
+                if expected_turn_kind == "plan_update"
+                else "商家还是不配合怎么办"
+            ),
+            attachment_ids=[attachment_id],
+        )
+    )
+
+    assert result.turn_kind == expected_turn_kind
+    assert provider.extraction_calls == 1
+    assert provider.continuation_calls == 1
+    assert provider.extraction_evidence_calls == [()]
+    assert len(provider.continuation_evidence_calls) == 1
+    assert [
+        str(item.id)
+        for item in provider.continuation_evidence_calls[0]
+    ] == [attachment_id]
+    assert [str(item.id) for item in result.attachments] == [attachment_id]
+    assert [
+        item.id for item in pipeline.attachments.list_for_turn(result.turn_id)
+    ] == [attachment_id]
+    assert store.list_turns(first.session_id)[-1].response[
+        "attachments"
+    ] == []
+
+
+def test_new_case_turn_releases_attachment_without_binding(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        continuation_responses=[
+            CaseContinuationResult(
+                route="new_case",
+                scenario_id="deposit_deduction",
+                confidence=0.99,
+                provider="fake",
+                model="fake-deterministic-v1",
+            )
+        ]
+    )
+    pipeline, store = make_pipeline(tmp_path, provider=provider)
+    first = run(
+        pipeline.consult(
+            message="网购商品有质量问题，商家拒绝退货，价款800元",
+            jurisdiction="CN",
+        )
+    )
+    attachment_id = create_confirmed_attachment(
+        pipeline,
+        text="租房押金凭证",
+    )
+
+    result = run(
+        pipeline.consult(
+            session_id=first.session_id,
+            message="另外房东还扣了我的租房押金",
+            attachment_ids=[attachment_id],
+        )
+    )
+
+    record = pipeline.attachments.get(attachment_id)
+    assert result.turn_kind == "new_case"
+    assert result.attachments == ()
+    assert record.status == "confirmed"
+    assert record.reservation_id is None
+    assert record.session_id is None
+    assert record.turn_id is None
+    assert pipeline.attachments.list_for_turn(result.turn_id) == []
+    assert len(store.list_turns(first.session_id)) == 2
+    assert [
+        str(item.id)
+        for item in provider.continuation_evidence_calls[-1]
+    ] == [attachment_id]
+
+
+def test_attachment_reservation_released_after_provider_failure(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        error=ProviderError(
+            "provider_timeout",
+            retryable=True,
+        )
+    )
+    pipeline, _ = make_pipeline(tmp_path, provider=provider)
+    attachment_id = create_confirmed_attachment(pipeline)
+
+    with pytest.raises(ProviderError):
+        run(
+            pipeline.consult(
+                message="房东不退押金",
+                attachment_ids=[attachment_id],
+            )
+        )
+
+    record = pipeline.attachments.get(attachment_id)
+    assert record.status == "confirmed"
+    assert record.reservation_id is None
+    assert record.turn_id is None
+
+
+def test_attachment_reservation_released_after_context_validation(
+    tmp_path: Path,
+) -> None:
+    pipeline, _ = make_pipeline(tmp_path)
+    attachment_id = create_confirmed_attachment(
+        pipeline,
+        text="证" * (pipeline.settings.max_attachment_context_chars + 1),
+    )
+
+    with pytest.raises(AttachmentResourceLimitError) as exc_info:
+        run(
+            pipeline.consult(
+                message="房东不退押金",
+                attachment_ids=[attachment_id],
+            )
+        )
+
+    assert exc_info.value.code == "attachment_context_too_long"
+    record = pipeline.attachments.get(attachment_id)
+    assert record.status == "confirmed"
+    assert record.reservation_id is None
+
+
+def test_pipeline_concurrent_attachment_reservation_calls_provider_once(
+    tmp_path: Path,
+) -> None:
+    class BlockingProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.unblock = asyncio.Event()
+
+        async def extract_facts(self, message, context, evidence=()):
+            self.entered.set()
+            await self.unblock.wait()
+            return await super().extract_facts(message, context, evidence)
+
+    provider = BlockingProvider()
+    pipeline, _ = make_pipeline(tmp_path, provider=provider)
+    attachment_id = create_confirmed_attachment(pipeline)
+
+    async def scenario():
+        first = asyncio.create_task(
+            pipeline.consult(
+                message="房东不退押金",
+                attachment_ids=[attachment_id],
+            )
+        )
+        await provider.entered.wait()
+        try:
+            with pytest.raises(AttachmentStateConflictError):
+                await pipeline.consult(
+                    message="房东不退押金",
+                    attachment_ids=[attachment_id],
+                )
+        finally:
+            provider.unblock.set()
+        return await first
+
+    result = run(scenario())
+
+    assert provider.extraction_calls == 1
+    assert provider.continuation_calls == 0
+    assert [
+        item.id for item in pipeline.attachments.list_for_turn(result.turn_id)
+    ] == [attachment_id]
+
+
+def test_pipeline_cancellation_releases_attachment_reservation(
+    tmp_path: Path,
+) -> None:
+    class BlockingProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.never = asyncio.Event()
+
+        async def extract_facts(self, message, context, evidence=()):
+            del message, context, evidence
+            self.entered.set()
+            await self.never.wait()
+            raise AssertionError("unreachable")
+
+    provider = BlockingProvider()
+    pipeline, _ = make_pipeline(tmp_path, provider=provider)
+    attachment_id = create_confirmed_attachment(pipeline)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            pipeline.consult(
+                message="房东不退押金",
+                attachment_ids=[attachment_id],
+            )
+        )
+        await provider.entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    run(scenario())
+
+    record = pipeline.attachments.get(attachment_id)
+    assert record.status == "confirmed"
+    assert record.reservation_id is None
+    assert record.turn_id is None
+
+
+def test_binding_failure_rolls_back_session_turn_and_attachment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline, store = make_pipeline(tmp_path)
+    session = store.create_session()
+    attachment_id = create_confirmed_attachment(pipeline)
+    real_reservation_binder = pipeline.attachments.reservation_binder
+
+    def failing_reservation_binder(*args, **kwargs):
+        binder = real_reservation_binder(*args, **kwargs)
+
+        def bind_then_fail(connection, session_id, turn_id) -> None:
+            binder(connection, session_id, turn_id)
+            raise RuntimeError("injected binding failure")
+
+        return bind_then_fail
+
+    monkeypatch.setattr(
+        pipeline.attachments,
+        "reservation_binder",
+        failing_reservation_binder,
+    )
+
+    with pytest.raises(DataIntegrityError) as exc_info:
+        run(
+            pipeline.consult(
+                session_id=session.id,
+                message=(
+                    "押金2000元，房东扣2000元，没理由，"
+                    "合同没写可以扣。"
+                ),
+                attachment_ids=[attachment_id],
+            )
+        )
+
+    assert exc_info.value.code == "pipeline_integrity_failed"
+    restored_session = store.require_session(session.id)
+    restored_attachment = pipeline.attachments.get(attachment_id)
+    assert restored_session.scenario_id is None
+    assert restored_session.facts == {}
+    assert restored_session.followup_round == 0
+    assert store.list_turns(session.id) == []
+    assert restored_attachment.status == "confirmed"
+    assert restored_attachment.reservation_id is None
+    assert restored_attachment.session_id is None
+    assert restored_attachment.turn_id is None
