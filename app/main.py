@@ -17,6 +17,7 @@ from app.agent.errors import (
     SessionNotFoundError,
     StorageUnavailableError,
 )
+from app.attachments.errors import AttachmentError
 from app.api.consult import router as consult_router
 from app.api.health import router as health_router
 from app.api.sessions import router as sessions_router
@@ -121,7 +122,9 @@ async def _safe_error_handler(
     exc: SafeApplicationError,
 ) -> JSONResponse:
     del request
-    if isinstance(exc, (RequestInputError, SessionNotFoundError)):
+    if isinstance(exc, AttachmentError):
+        status_code = exc.status_code
+    elif isinstance(exc, (RequestInputError, SessionNotFoundError)):
         status_code = 422
     elif isinstance(exc, RateLimitError):
         status_code = 429

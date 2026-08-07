@@ -59,6 +59,45 @@ class Settings(BaseSettings):
     session_ttl_hours: int = Field(default=72, gt=0)
     default_jurisdiction: str = ""
 
+    max_attachments_per_turn: int = Field(default=3, ge=1, le=3)
+    max_attachment_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1024,
+        le=50 * 1024 * 1024,
+    )
+    max_attachment_pdf_pages: int = Field(default=20, ge=1, le=100)
+    max_attachment_image_pixels: int = Field(
+        default=25_000_000,
+        ge=1,
+        le=100_000_000,
+    )
+    max_attachment_extracted_chars: int = Field(
+        default=200_000,
+        ge=1,
+        le=1_000_000,
+    )
+    max_attachment_context_chars: int = Field(
+        default=12_000,
+        ge=1,
+        le=100_000,
+    )
+    attachment_extraction_timeout_seconds: float = Field(
+        default=90,
+        ge=1,
+        le=300,
+    )
+    attachment_draft_ttl_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86_400,
+    )
+    attachment_low_confidence_threshold: float = Field(
+        default=0.75,
+        ge=0,
+        le=1,
+    )
+    attachment_temp_dir: Path = Path("./.tmp/attachments")
+
     @field_validator("server_api_key", "deepseek_api_key", mode="before")
     @classmethod
     def empty_key_is_none(cls, value: object) -> object:
@@ -106,6 +145,28 @@ class Settings(BaseSettings):
             raise ValueError("DeepSeek 输入和输出单价必须同时配置或同时留空")
         return self
 
+    @model_validator(mode="after")
+    def validate_attachment_temp_directory(self) -> "Settings":
+        root = PROJECT_ROOT.resolve()
+        temp_path = self.attachment_temp_path
+        static_path = (root / "app" / "web").resolve()
+        forbidden_files = {
+            self.database_path,
+            self.statute_database_path,
+        }
+        if temp_path == root or not temp_path.is_relative_to(root):
+            raise ValueError("附件临时目录必须位于项目根目录内")
+        if (
+            temp_path == static_path
+            or temp_path.is_relative_to(static_path)
+        ):
+            raise ValueError("附件临时目录不能位于静态资源目录")
+        if temp_path in forbidden_files:
+            raise ValueError("附件临时目录不能指向数据库文件")
+        if temp_path.exists() and not temp_path.is_dir():
+            raise ValueError("附件临时目录不能指向普通文件")
+        return self
+
     @property
     def allowed_origins(self) -> list[str]:
         return [
@@ -138,6 +199,10 @@ class Settings(BaseSettings):
     @property
     def jurisdiction_path(self) -> Path:
         return self.absolute_path(self.jurisdiction_config_path)
+
+    @property
+    def attachment_temp_path(self) -> Path:
+        return self.absolute_path(self.attachment_temp_dir)
 
 
 @lru_cache
