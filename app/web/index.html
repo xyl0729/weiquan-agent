@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#ffffff">
+    <meta name="description" content="本地维权咨询工作台">
+    <title>维权咨询助手</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <div class="app-shell" id="app" data-view="new" data-history-open="false">
+      <header class="app-header">
+        <div class="brand">
+          <button
+            class="icon-button history-toggle"
+            id="history-toggle"
+            type="button"
+            aria-label="打开咨询记录"
+            aria-controls="history-panel"
+            aria-expanded="false"
+            data-tooltip="咨询记录"
+          >
+            <svg class="icon" aria-hidden="true">
+              <use href="/static/icons/lucide.svg#menu"></use>
+            </svg>
+          </button>
+          <span class="brand-mark" aria-hidden="true">维</span>
+          <strong>维权咨询助手</strong>
+        </div>
+
+        <div class="header-path" id="header-path">新咨询</div>
+
+        <div class="service-state" id="service-state" data-status="loading">
+          <span class="service-dot" aria-hidden="true"></span>
+          <span id="service-state-label">正在连接</span>
+        </div>
+      </header>
+
+      <div class="app-body">
+        <aside
+          class="history-panel"
+          id="history-panel"
+          aria-label="咨询记录"
+        >
+          <div class="history-panel-head">
+            <button class="new-session-button" id="new-session" type="button">
+              <svg class="icon" aria-hidden="true">
+                <use href="/static/icons/lucide.svg#square-pen"></use>
+              </svg>
+              <span>新咨询</span>
+            </button>
+            <button
+              class="icon-button history-close"
+              id="history-close"
+              type="button"
+              aria-label="关闭咨询记录"
+              data-tooltip="关闭"
+            >
+              <svg class="icon" aria-hidden="true">
+                <use href="/static/icons/lucide.svg#x"></use>
+              </svg>
+            </button>
+          </div>
+
+          <div class="history-heading">
+            <span>最近咨询</span>
+            <button
+              class="icon-button icon-button-small"
+              id="history-retry"
+              type="button"
+              aria-label="刷新咨询记录"
+              data-tooltip="刷新记录"
+            >
+              <svg class="icon" aria-hidden="true">
+                <use href="/static/icons/lucide.svg#refresh-cw"></use>
+              </svg>
+            </button>
+          </div>
+
+          <div class="history-status" id="history-status" role="status">
+            正在读取记录
+          </div>
+          <nav
+            class="history-list"
+            id="history-list"
+            aria-label="最近咨询"
+          ></nav>
+
+          <div class="local-note">
+            <svg class="icon" aria-hidden="true">
+              <use href="/static/icons/lucide.svg#hard-drive"></use>
+            </svg>
+            <span>仅保存在本机</span>
+          </div>
+        </aside>
+
+        <button
+          class="drawer-backdrop"
+          id="drawer-backdrop"
+          type="button"
+          aria-label="关闭咨询记录"
+          tabindex="-1"
+        ></button>
+
+        <main class="main-content">
+          <section class="new-screen" id="new-screen" aria-labelledby="new-title">
+            <div class="new-inner">
+              <header class="new-copy">
+                <span class="section-kicker">新咨询</span>
+                <h1 id="new-title">先把事情说清楚</h1>
+                <p>
+                  从发生了什么开始说。时间、金额和已经采取的处理，
+                  会在接下来的咨询中逐步整理。
+                </p>
+              </header>
+
+              <form class="composer new-composer" id="new-form" novalidate>
+                <label class="sr-only" for="new-message">
+                  描述需要咨询的问题
+                </label>
+                <textarea
+                  id="new-message"
+                  name="message"
+                  rows="5"
+                  maxlength="4000"
+                  placeholder="例如：商家发错货，但拒绝退款，我已经联系过平台客服……"
+                ></textarea>
+                <div class="composer-meta">
+                  <p class="input-error" id="new-message-error" aria-live="polite"></p>
+                  <div class="composer-actions">
+                    <span class="privacy-note">
+                      <svg class="icon" aria-hidden="true">
+                        <use href="/static/icons/lucide.svg#shield-check"></use>
+                      </svg>
+                      本机测试
+                    </span>
+                    <span class="character-count" id="new-character-count">
+                      0 / 4000
+                    </span>
+                    <button
+                      class="send-button"
+                      id="new-send"
+                      type="submit"
+                      aria-label="开始咨询"
+                      data-tooltip="开始咨询"
+                    >
+                      <span class="button-spinner" aria-hidden="true"></span>
+                      <svg class="icon send-icon" aria-hidden="true">
+                        <use href="/static/icons/lucide.svg#arrow-up"></use>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              <div class="starter-list" aria-label="常见咨询入口">
+                <button
+                  class="starter"
+                  type="button"
+                  data-starter="网购商品与描述不符，商家拒绝退款"
+                >
+                  <span class="starter-copy">
+                    <small>消费纠纷</small>
+                    <strong>商品与描述不符</strong>
+                  </span>
+                  <svg class="icon" aria-hidden="true">
+                    <use href="/static/icons/lucide.svg#arrow-up-right"></use>
+                  </svg>
+                </button>
+                <button
+                  class="starter"
+                  type="button"
+                  data-starter="退租后房东没有说明合理依据，直接扣除了我的押金"
+                >
+                  <span class="starter-copy">
+                    <small>房屋租赁</small>
+                    <strong>押金被无故扣除</strong>
+                  </span>
+                  <svg class="icon" aria-hidden="true">
+                    <use href="/static/icons/lucide.svg#arrow-up-right"></use>
+                  </svg>
+                </button>
+                <button
+                  class="starter"
+                  type="button"
+                  data-starter="公司长期拖欠工资，并且没有给出明确支付时间"
+                >
+                  <span class="starter-copy">
+                    <small>劳动权益</small>
+                    <strong>工资长期拖欠</strong>
+                  </span>
+                  <svg class="icon" aria-hidden="true">
+                    <use href="/static/icons/lucide.svg#arrow-up-right"></use>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section
+            class="case-screen"
+            id="case-screen"
+            aria-labelledby="case-title"
+            hidden
+          >
+            <header class="case-header">
+              <div class="case-title-block">
+                <span class="case-number" id="case-number">案件</span>
+                <h1 id="case-title">咨询记录</h1>
+              </div>
+              <div class="case-stage" id="case-stage" data-status="need_more_facts">
+                <span class="case-stage-mark" aria-hidden="true"></span>
+                <span id="case-stage-label">正在整理</span>
+              </div>
+            </header>
+
+            <div class="case-alert" id="case-alert" role="status" hidden></div>
+            <div class="thread" id="thread" aria-live="polite"></div>
+
+            <form class="composer case-composer" id="case-form" novalidate>
+              <label class="sr-only" for="case-message">继续补充情况</label>
+              <textarea
+                id="case-message"
+                name="message"
+                rows="3"
+                maxlength="4000"
+                placeholder="继续补充情况"
+              ></textarea>
+              <div class="composer-meta">
+                <p class="input-error" id="case-message-error" aria-live="polite"></p>
+                <div class="composer-actions">
+                  <span class="character-count" id="case-character-count">
+                    0 / 4000
+                  </span>
+                  <button
+                    class="send-button"
+                    id="case-send"
+                    type="submit"
+                    aria-label="发送补充情况"
+                    data-tooltip="发送"
+                  >
+                    <span class="button-spinner" aria-hidden="true"></span>
+                    <svg class="icon send-icon" aria-hidden="true">
+                      <use href="/static/icons/lucide.svg#arrow-up"></use>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </main>
+
+        <aside
+          class="case-summary"
+          id="case-summary"
+          aria-labelledby="case-summary-title"
+          hidden
+        >
+          <header class="summary-heading">
+            <div>
+              <span class="section-kicker">CASE FILE</span>
+              <h2 id="case-summary-title">案件摘要</h2>
+            </div>
+            <span class="summary-state" id="summary-state">整理中</span>
+          </header>
+          <div id="summary-content"></div>
+        </aside>
+      </div>
+
+      <div
+        class="toast-region"
+        id="toast-region"
+        aria-live="polite"
+        aria-atomic="true"
+      ></div>
+
+      <dialog class="confirm-dialog" id="delete-dialog">
+        <form method="dialog">
+          <div class="dialog-mark" aria-hidden="true">
+            <svg class="icon" aria-hidden="true">
+              <use href="/static/icons/lucide.svg#trash-2"></use>
+            </svg>
+          </div>
+          <div class="dialog-copy">
+            <span class="section-kicker">删除记录</span>
+            <h2>确认删除这条咨询？</h2>
+            <p id="delete-dialog-description">
+              删除后，相关对话和案件摘要将从本机移除。
+            </p>
+          </div>
+          <div class="dialog-actions">
+            <button class="text-button" value="cancel">取消</button>
+            <button class="danger-button" id="delete-confirm" value="confirm">
+              删除
+            </button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+
+    <script type="module" src="/static/js/app.js"></script>
+  </body>
+</html>

@@ -1,9 +1,9 @@
-id: test_scenario
-name: 占位检索演示
+id: candidate_retrieval_demo
+name: 候选数据检索演示
 development_only: true
-warning: 仅用于验证技术管线，不包含真实法律规则
+warning: 仅用于验证技术管线；不包含正式法律规则
 aliases:
-  - 占位测试
+  - 候选数据测试
 slots:
   required:
     - name: query
@@ -11,13 +11,12 @@ slots:
       ask: 请输入用于测试检索的关键词。
   optional: []
 legal_basis:
-  - ref: 测试法.第一条
+  - ref: 住房租赁条例.第十条
 rules:
   - default: true
-    verdict: placeholder_only
-    key_point: 这是占位结果，不能用于真实纠纷。
+    verdict: development_only
+    key_point: 这是开发环境检索演示结果，不能替代针对具体事实的判断。
 limitation: null
 escalation: []
 evidence_now:
-  - 不要依据占位结果采取任何法律行动
-
+  - 不要仅依据开发环境演示结果采取任何法律行动

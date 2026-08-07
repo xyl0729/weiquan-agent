@@ -1,0 +1,118 @@
+version: 1.0.0
+id: small_claim_procedure
+name: 小额诉讼程序
+aliases:
+  - 小额诉讼
+  - 一审终审
+  - 小额程序异议
+jurisdiction_mode: required
+
+slots:
+  required:
+    - name: issue_type
+      type: enum
+      values:
+        - eligibility
+        - excluded_case
+        - time_limit
+        - objection
+        - other
+      ask: 需要核对的是小额诉讼适用条件、排除案件、审理期限，还是程序异议？
+  optional:
+    - name: claim_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: filing_date
+      type: date
+      default: null
+    - name: requires_appraisal
+      type: boolean
+      default: false
+    - name: has_counterclaim
+      type: boolean
+      default: false
+
+verdicts:
+  - code: eligibility_requires_local_threshold
+    label: 小额诉讼适用需同时核对案件性质和当地年度金额标准
+    status: ready
+  - code: excluded_case_uses_other_procedure
+    label: 法定排除情形不适用小额诉讼程序
+    status: ready
+  - code: two_month_trial_period_applies
+    label: 小额诉讼通常应在立案后两个月内审结
+    status: ready
+  - code: procedure_objection_may_be_raised
+    label: 认为程序适用违法时可向人民法院提出异议
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对案件性质、标的额、当地标准和程序状态
+    status: need_more_facts
+
+legal_basis:
+  - ref: 民事诉讼法.第一百六十五条
+    purpose: 小额诉讼案件性质、金额标准和一审终审规则
+  - ref: 民事诉讼法.第一百六十六条
+    purpose: 人身关系、确权、涉外、鉴定、下落不明和反诉等排除情形
+  - ref: 民事诉讼法.第一百六十八条
+    purpose: 两个月审理期限及特殊情况下延长一个月
+  - ref: 民事诉讼法.第一百六十九条
+    purpose: 转换程序及当事人对违法适用小额诉讼提出异议
+
+rules:
+  - id: eligibility
+    when:
+      eq:
+        slot: issue_type
+        value: eligibility
+    verdict: eligibility_requires_local_threshold
+    key_point: 适用小额诉讼需同时确认基层法院受理、简单金钱给付、事实和权利义务清楚、争议不大，并使用当地上年度就业人员年平均工资计算金额标准。
+  - id: excluded_case
+    when:
+      eq:
+        slot: issue_type
+        value: excluded_case
+    verdict: excluded_case_uses_other_procedure
+    key_point: 人身关系、财产确权、涉外、需要评估鉴定、当事人下落不明、提出反诉等案件，不适用小额诉讼程序。
+  - id: time_limit
+    when:
+      eq:
+        slot: issue_type
+        value: time_limit
+    verdict: two_month_trial_period_applies
+    key_point: 小额诉讼审理期限从立案之日起计算，通常为两个月；有特殊情况并经本院院长批准，可以延长一个月。
+  - id: objection
+    when:
+      eq:
+        slot: issue_type
+        value: objection
+    verdict: procedure_objection_may_be_raised
+    key_point: 当事人认为违法适用小额诉讼程序时可以向人民法院提出异议；是否成立及后续转为其他程序由法院依法审查决定。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 当前信息不足以确定案件是否适用小额诉讼，需要补充请求类型、标的额、受理法院、当地年度标准和是否存在排除情形。
+
+evidence_now:
+  - 起诉状、立案通知、受理法院和案件编号
+  - 诉讼请求、标的额计算明细及合同、转账等金钱给付证据
+  - 法院关于适用小额诉讼、一审终审或程序转换的告知材料
+  - 是否涉及人身关系、确权、涉外、评估鉴定、下落不明或反诉的材料
+  - 程序异议、提交时间、送达凭证和法院审查结果
+
+actions:
+  - 先确认诉讼请求是否属于事实清楚、权利义务明确且争议不大的简单金钱给付。
+  - 向受理法院核实当地上年度就业人员年平均工资数据及本案金额标准，不自行猜测。
+  - 逐项排查法定不适用情形，并把评估鉴定、反诉等情况及时告知法院。
+  - 记录立案日期、审理进度和法院批准延长的信息，避免把两个月理解为绝对结案日。
+  - 认为程序适用违法时，及时向法院提交书面异议并保留送达和审查材料。
+
+limitations:
+  - 本地辖区配置尚未登记各省级地区上年度就业人员年平均工资，无法据此计算具体小额诉讼金额上限。
+  - 一审终审是程序规则，不代表任何一方实体请求必然获得支持，也不替代证据和法律关系审查。
+  - 是否需要评估鉴定、是否属于简单金钱给付以及程序异议是否成立，均由人民法院依法审查。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2

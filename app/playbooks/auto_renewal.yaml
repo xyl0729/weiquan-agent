@@ -1,0 +1,108 @@
+version: 1.0.0
+id: auto_renewal
+name: 自动续费与默认扣款
+aliases:
+  - 自动续费
+  - 连续包月扣款
+  - 自动展期
+jurisdiction_mode: national
+
+slots:
+  required:
+    - name: issue_type
+      type: enum
+      values:
+        - no_reminder
+        - default_option
+        - hidden_term
+        - other
+      ask: 争议主要是续费前未显著提醒、默认勾选搭售服务，还是自动续费条款被隐藏？
+  optional:
+    - name: charge_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: charge_date
+      type: date
+      default: null
+    - name: has_pre_service_notice
+      type: boolean
+      default: null
+    - name: has_pre_charge_notice
+      type: boolean
+      default: null
+    - name: user_selected_option
+      type: boolean
+      default: null
+
+verdicts:
+  - code: prominent_renewal_notice_required
+    label: 自动续费应在接受服务前和续费日期前显著提醒
+    status: ready
+  - code: default_add_on_option_prohibited
+    label: 搭售商品或服务不得作为默认同意选项
+    status: ready
+  - code: hidden_material_term_requires_review
+    label: 未合理提示的重大利害关系格式条款应接受审查
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对订购页面、提醒记录、扣款和取消流程
+    status: need_more_facts
+
+legal_basis:
+  - ref: 消费者权益保护法实施条例.第十条
+    purpose: 自动展期或自动续费在接受服务前及续费日期前的显著提醒义务
+  - ref: 电子商务法.第十九条
+    purpose: 搭售商品或服务应显著提示且不得默认同意
+  - ref: 民法典.第四百九十六条
+    purpose: 格式条款提供方对重大利害关系条款的提示和说明义务
+
+rules:
+  - id: no_reminder
+    when:
+      eq:
+        slot: issue_type
+        value: no_reminder
+    verdict: prominent_renewal_notice_required
+    key_point: 应分别核对首次接受服务前和每次自动续费日期前是否以显著方式提醒，不能用隐藏在一般页面中的说明替代两阶段提示。
+  - id: default_option
+    when:
+      eq:
+        slot: issue_type
+        value: default_option
+    verdict: default_add_on_option_prohibited
+    key_point: 涉及搭售的增值商品或服务时，应核对是否显著提示并由用户主动选择，不得把搭售项目预先勾选为默认同意。
+  - id: hidden_term
+    when:
+      eq:
+        slot: issue_type
+        value: hidden_term
+    verdict: hidden_material_term_requires_review
+    key_point: 应检查自动续费的周期、价格、扣款时间和取消方式是否被合理提示并说明；未履行提示说明义务的法律效果需结合订约过程审查。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 当前信息不足以区分未提醒、默认搭售和隐藏格式条款，需要补充订购、提醒、扣款、取消及退款页面。
+
+evidence_now:
+  - 首次订购页面、会员规则、价格周期和自动续费条款完整截图
+  - 购买时勾选状态、确认步骤、支付页面和订单凭证
+  - 续费日期前的站内信、短信、推送、邮件和通知权限记录
+  - 银行或支付平台扣款流水、扣款时间、商户名称和订单号
+  - 取消续费、申请退款、客服回复和平台处理结果的完整记录
+
+actions:
+  - 立即关闭后续自动续费并保存关闭前后的页面、时间和操作结果。
+  - 导出首次订购到争议扣款期间的全部订单、通知和支付流水。
+  - 对照接受服务前提示与扣款日前提示，分别记录是否显著、内容是否完整。
+  - 书面向经营者提出争议扣款、退款金额和依据，并要求提供用户确认记录。
+  - 协商无果时，向支付渠道或平台申诉，并根据材料选择行政投诉或诉讼。
+
+limitations:
+  - 未显著提醒不等于系统自动确定每笔扣款均应全额返还，退款范围仍需结合服务使用、用户确认和具体请求审查。
+  - 电子商务法第十九条针对搭售默认选项；单独的自动续费问题应优先核对消费者权益保护法实施条例第十条。
+  - 页面是否达到显著提示标准，需要结合字号、位置、颜色、操作步骤和用户实际确认过程判断。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2

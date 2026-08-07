@@ -1,0 +1,161 @@
+version: 1.0.0
+id: counterfeit_goods
+name: 假货与商品欺诈
+aliases:
+  - 假货
+  - 以假充真
+  - 三倍赔偿
+jurisdiction_mode: national
+
+slots:
+  required:
+    - name: issue_type
+      type: enum
+      values:
+        - counterfeit
+        - quality_remedy
+        - consumer_fraud
+        - platform_responsibility
+        - seller_identity
+        - administrative_penalty
+        - other
+      ask: 争议主要涉及假货事实、退换修、消费欺诈、平台责任、卖家身份还是行政处罚？
+  optional:
+    - name: purchase_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: platform_purchase
+      type: boolean
+      default: false
+    - name: has_authentication_evidence
+      type: boolean
+      default: false
+    - name: personal_injury
+      type: boolean
+      default: false
+    - name: seller_contact_available
+      type: boolean
+      default: null
+
+verdicts:
+  - code: counterfeit_sale_prohibited
+    label: 销售掺假、以假充真等产品受到明确禁止
+    status: ready
+  - code: repair_replace_return_may_apply
+    label: 不符合质量要求时可核对修理、更换、退货和损失
+    status: ready
+  - code: fraud_compensation_requires_proof
+    label: 欺诈增加赔偿须先证明经营者欺诈事实
+    status: ready
+  - code: platform_duty_requires_knowledge_and_inaction
+    label: 平台责任取决于知道或应知及是否采取必要措施
+    status: ready
+  - code: platform_may_answer_for_missing_seller_identity
+    label: 平台不能提供卖家真实有效信息时可核对平台赔偿责任
+    status: ready
+  - code: administrative_penalty_is_regulatory
+    label: 掺假等行政处罚由执法机关依法认定和实施
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对商品真伪、交易主体、欺诈和损失证据
+    status: need_more_facts
+
+legal_basis:
+  - ref: 产品质量法.第三十九条
+    purpose: 禁止掺杂、掺假、以假充真、以次充好
+  - ref: 产品质量法.第四十条
+    purpose: 不符合性能、标准或明示质量时的退换修和损失赔偿
+  - ref: 产品质量法.第五十条
+    purpose: 掺假等行为的行政处理和罚款规则
+  - ref: 消费者权益保护法.第四十四条
+    purpose: 网络交易卖家信息缺失及平台明知或应知时的责任
+  - ref: 消费者权益保护法.第五十五条
+    purpose: 经营者欺诈时的增加赔偿规则
+  - ref: 电子商务法.第三十八条
+    purpose: 平台知道或应知侵权而未采取必要措施时的责任
+
+rules:
+  - id: counterfeit
+    when:
+      eq:
+        slot: issue_type
+        value: counterfeit
+    verdict: counterfeit_sale_prohibited
+    key_point: 应先用商品来源、标识、官方核验、检测或其他可靠材料证明掺假、以假充真、以次充好等具体事实。
+  - id: quality_remedy
+    when:
+      eq:
+        slot: issue_type
+        value: quality_remedy
+    verdict: repair_replace_return_may_apply
+    key_point: 商品不具备应有性能、不符合标注标准或明示质量时，可按具体情形主张修理、更换、退货及可证明的损失。
+  - id: consumer_fraud
+    when:
+      eq:
+        slot: issue_type
+        value: consumer_fraud
+    verdict: fraud_compensation_requires_proof
+    key_point: 三倍或最低五百元的增加赔偿以经营者欺诈成立为前提，不能仅凭商品存在质量问题自动认定欺诈。
+  - id: platform_responsibility
+    when:
+      eq:
+        slot: issue_type
+        value: platform_responsibility
+    verdict: platform_duty_requires_knowledge_and_inaction
+    key_point: 应证明平台知道或者应当知道侵权行为，并核对平台收到投诉后是否及时采取下架、断链等必要措施。
+  - id: seller_identity
+    when:
+      eq:
+        slot: issue_type
+        value: seller_identity
+    verdict: platform_may_answer_for_missing_seller_identity
+    key_point: 网络交易平台不能提供销售者真实名称、地址和有效联系方式时，可据此向平台提出相应赔偿请求并保留查询记录。
+  - id: administrative_penalty
+    when:
+      eq:
+        slot: issue_type
+        value: administrative_penalty
+    verdict: administrative_penalty_is_regulatory
+    key_point: 货值比例罚款等属于行政执法事项，由有权机关调查认定；消费者可提交线索，但不能自行确定处罚数额。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 当前信息不足以区分一般质量问题、假货、欺诈和平台责任，应继续固定商品、宣传、鉴定、主体和投诉处理材料。
+
+evidence_now:
+  - 商品页面、宣传承诺、订单、付款记录、发票和物流信息
+  - 商品本体、包装、防伪码、序列号、标签和完整开箱影像
+  - 品牌方核验、检测报告、鉴定意见或监管部门处理材料
+  - 卖家名称、地址、联系方式、店铺主体和平台披露记录
+  - 向卖家及平台投诉的内容、时间、送达状态和处理结果
+
+actions:
+  - 暂停继续使用或处置争议商品，保存原物、包装、附件和购买凭证。
+  - 通过品牌官方渠道、合格检测机构或监管部门核验真伪，保留核验过程。
+  - 区分退换修请求、欺诈增加赔偿、实际损失和行政举报，分别列明依据。
+  - 涉及平台时，书面要求披露卖家真实信息并通知平台具体侵权证据。
+  - 造成人身损害或金额较高时，尽快完成医疗、商品和电子证据保全。
+
+limitations:
+  - 商品质量不合格不当然等同于假货，假货也不当然证明经营者主观欺诈，二者证据要求需要分开。
+  - 产品质量法中的货值比例罚款属于行政处罚，不是直接支付给消费者的赔偿金额。
+  - 平台责任需结合平台掌握的信息、投诉通知内容、采取措施时间及损害因果关系判断。
+
+escalation:
+  - id: personal_injury
+    when:
+      eq:
+        slot: personal_injury
+        value: true
+    message: 涉及人身损害，应尽快就医并保存病历、费用、商品和因果关系证据，建议由专业人员介入。
+  - id: high_value_counterfeit
+    when:
+      gte:
+        slot: purchase_amount
+        value: 100000
+    message: 交易金额较高，建议在鉴定、退货或诉讼前由专业人员设计证据保全和责任主体方案。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2

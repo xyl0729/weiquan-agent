@@ -1,0 +1,47 @@
+【立即保全证据】
+{% for item in plan.evidence_now %}
+{{ item.order }}. {{ item.text }}
+{% endfor %}
+
+【时效提示】
+{% if plan.time_limit %}
+事项：{{ plan.time_limit.label }}
+状态：{{ plan.time_limit.status }}
+{% if plan.time_limit.start_date %}起算日：{{ plan.time_limit.start_date }}{% endif %}
+{% if plan.time_limit.deadline %}截止日：{{ plan.time_limit.deadline }}{% endif %}
+{% if plan.time_limit.remaining_days is not none %}剩余天数：{{ plan.time_limit.remaining_days }}{% endif %}
+提示：{{ plan.time_limit.reminder }}
+{% else %}
+当前已核验规则未提供可直接计算的确定期限，请结合受理机构要求另行核对。
+{% endif %}
+
+【初步判断】
+{{ plan.summary }}
+规则代码：{{ plan.verdict.code }}
+
+【法条原文引用】
+{% for citation in plan.citations %}
+{{ loop.index }}. {{ citation.law_name }}{{ citation.article_no }}
+{{ citation.content }}
+生效日期：{{ citation.effective_date }}
+来源：{{ citation.source_url }}
+{% endfor %}
+
+【行动步骤】
+{% for action in plan.actions %}
+{{ action.order }}. {{ action.text }}
+{% endfor %}
+
+【沟通建议】
+{{ plan.communication_text }}
+
+【适用辖区】
+{% if plan.jurisdiction.code %}{{ plan.jurisdiction.name }}（{{ plan.jurisdiction.code }}）{% else %}未登记辖区{% endif %}
+{% for message in plan.jurisdiction.messages %}
+{{ message }}
+{% endfor %}
+
+【限制与免责声明】
+{% for limitation in plan.limitations %}
+{{ loop.index }}. {{ limitation }}
+{% endfor %}

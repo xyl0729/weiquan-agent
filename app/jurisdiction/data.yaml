@@ -1,0 +1,10 @@
+version: 1
+default_code: CN
+jurisdictions:
+  - code: CN
+    name: 中华人民共和国（全国性规则）
+    aliases:
+      - 中国
+      - 全国
+      - 中华人民共和国
+    small_claim_threshold_yuan: null

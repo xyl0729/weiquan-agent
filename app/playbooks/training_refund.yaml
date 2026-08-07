@@ -1,0 +1,152 @@
+version: 1.0.0
+id: training_refund
+name: 培训服务退费
+aliases:
+  - 培训退费
+  - 课程退款
+  - 教培机构退费
+jurisdiction_mode: national
+
+slots:
+  required:
+    - name: issue_type
+      type: enum
+      values:
+        - service_not_provided
+        - closure
+        - unfair_term
+        - service_quality
+        - delayed_service
+        - termination_refund
+        - other
+      ask: 争议主要是未按约上课、机构停业、概不退费条款、服务质量、延迟开课，还是解除后的退费问题？
+  optional:
+    - name: remaining_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: has_written_contract
+      type: boolean
+      default: null
+    - name: has_payment_proof
+      type: boolean
+      default: false
+    - name: service_started
+      type: boolean
+      default: null
+
+verdicts:
+  - code: performance_or_refund_supported
+    label: 未按约提供培训服务时可核对继续履行或退回预付款
+    status: ready
+  - code: unused_training_balance_refund_supported
+    label: 停业等情形下可核对并主张退还未消费培训费
+    status: ready
+  - code: unfair_training_term_requires_review
+    label: 限制解除或概不退费条款应接受公平性审查
+    status: ready
+  - code: promised_training_quality_requires_check
+    label: 实际培训质量应与经营者明示的质量状况相符
+    status: ready
+  - code: delayed_performance_may_support_termination
+    label: 严重迟延且催告后仍未履行主要课程时可核对解除条件
+    status: ready
+  - code: termination_restoration_rules_apply
+    label: 合同解除后可按履行情况核对返还和其他补救措施
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对合同、付款、课程履行和解除事实
+    status: need_more_facts
+
+legal_basis:
+  - ref: 消费者权益保护法.第二十三条
+    purpose: 服务实际质量应与经营者明示的质量状况相符
+  - ref: 消费者权益保护法.第五十三条
+    purpose: 预收款服务未按约提供时的履行、退款和合理费用规则
+  - ref: 消费者权益保护法实施条例.第十七条
+    purpose: 不得以格式条款不合理限制消费者变更或解除合同等权利
+  - ref: 消费者权益保护法实施条例.第二十二条
+    purpose: 预付款书面合同、正常履约、停业告知和未消费余额退款要求
+  - ref: 民法典.第五百六十三条
+    purpose: 迟延履行主要债务等法定解除条件
+  - ref: 民法典.第五百六十六条
+    purpose: 合同解除后的终止履行、恢复原状和其他补救措施
+
+rules:
+  - id: service_not_provided
+    when:
+      eq:
+        slot: issue_type
+        value: service_not_provided
+    verdict: performance_or_refund_supported
+    key_point: 应先核对约定课程、已上课程和未履行部分；机构未按约提供服务时，可据此要求继续履行或退回相应预付款。
+  - id: closure
+    when:
+      eq:
+        slot: issue_type
+        value: closure
+    verdict: unused_training_balance_refund_supported
+    key_point: 机构停业、迁移或者无法继续正常履约时，应立即固定剩余课时和余额，并书面要求继续履行或退还未消费部分。
+  - id: unfair_term
+    when:
+      eq:
+        slot: issue_type
+        value: unfair_term
+    verdict: unfair_training_term_requires_review
+    key_point: 对任何情况下概不退费、单方限制解除等格式条款，应核对是否不合理免除机构责任、加重消费者责任或限制消费者主要权利。
+  - id: service_quality
+    when:
+      eq:
+        slot: issue_type
+        value: service_quality
+    verdict: promised_training_quality_requires_check
+    key_point: 应把招生宣传、课程说明、师资承诺和实际服务逐项对照，确认实际质量是否与经营者明示的质量状况相符。
+  - id: delayed_service
+    when:
+      eq:
+        slot: issue_type
+        value: delayed_service
+    verdict: delayed_performance_may_support_termination
+    key_point: 迟延开课不当然导致解除；应固定约定期限、催告到达和合理期限届满后仍未履行主要课程的证据。
+  - id: termination_refund
+    when:
+      eq:
+        slot: issue_type
+        value: termination_refund
+    verdict: termination_restoration_rules_apply
+    key_point: 合同依法解除后，应按已履行课程、未履行部分和合同性质核对返还范围、其他补救措施及可证明的损失。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 当前信息不足以确定适用哪类培训退费规则，需要继续核对合同、宣传、付款、排课、实际履行和解除通知。
+
+evidence_now:
+  - 培训合同、报名协议、课程说明、退费规则和签约页面完整截图
+  - 付款凭证、发票收据、分期记录及已上和未上课时明细
+  - 招生宣传、师资承诺、课程内容和服务质量说明
+  - 排课记录、上课记录、延期或停业通知及经营场所状态材料
+  - 催告、解除、退费申请和机构回复的聊天、短信、邮件或书面记录
+
+actions:
+  - 立即备份合同、宣传材料、付款凭证、排课记录和全部沟通原件。
+  - 按已付款、已履行和未履行三部分制作课时与金额明细，保留计算依据。
+  - 书面要求机构说明后续履行安排、退费金额、扣费项目和计算方式。
+  - 主张迟延解除时，单独保存催告内容、送达凭证和合理期限届满的时间线。
+  - 协商无果时，携带完整材料选择消费者调解、行政投诉、仲裁或诉讼渠道。
+
+limitations:
+  - 本场景以个人为生活消费目的购买培训服务为前提；职业资格监管、学历教育和单位培训可能适用其他规则。
+  - 实际退费金额仍取决于合同、已履行课程价值、赠送项目、有效期约定和可核实余额，本 playbook 不直接计算最终金额。
+  - 合同是否已经解除以及解除是否有效，需要结合解除条件、催告、通知送达和履行状态判断。
+
+escalation:
+  - id: high_remaining_training_balance
+    when:
+      gte:
+        slot: remaining_amount
+        value: 50000
+    message: 未消费培训费余额较高，建议在集中维权、财产保全或诉讼前由当地专业人员核对机构主体、资产线索和证据链。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2

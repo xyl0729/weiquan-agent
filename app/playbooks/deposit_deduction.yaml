@@ -1,0 +1,158 @@
+version: 1.0.0
+id: deposit_deduction
+name: 租房押金扣减
+aliases:
+  - 押金
+  - 房东扣押金
+  - 退租押金
+jurisdiction_mode: national
+
+slots:
+  required:
+    - name: deposit_amount
+      type: number
+      minimum: 0
+      ask: 押金总额是多少元？
+    - name: withheld_amount
+      type: number
+      minimum: 0
+      ask: 房东准备扣减或拒绝返还多少元？
+    - name: landlord_reason
+      type: enum
+      values:
+        - no_reason
+        - normal_wear
+        - nail_holes
+        - minor_scuff
+        - real_damage
+        - unpaid_bill
+        - early_exit
+        - other
+      ask: 房东给出的扣款理由是什么？
+    - name: contract_has_deduction_term
+      type: boolean
+      ask: 租赁合同是否明确约定了这种扣减情形？
+  optional:
+    - name: lease_end_date
+      type: date
+      default: null
+    - name: has_checkout_photos
+      type: boolean
+      default: false
+    - name: landlord_has_receipt
+      type: boolean
+      default: false
+    - name: has_written_notice
+      type: boolean
+      default: false
+    - name: damage_description
+      type: string
+      max_length: 1000
+      default: null
+    - name: repair_cost
+      type: number
+      minimum: 0
+      default: null
+
+verdicts:
+  - code: normal_wear_not_compensable
+    label: 正常使用损耗通常不承担赔偿责任
+    status: ready
+  - code: deduction_lacks_stated_basis
+    label: 当前扣减理由和合同依据不足
+    status: ready
+  - code: documented_damage_may_support_deduction
+    label: 实际损坏及合理费用可能支持相应扣减
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对合同、损坏或费用证据
+    status: need_more_facts
+  - code: escalate
+    label: 建议转由专业人员核对复杂争议
+    status: escalate
+
+legal_basis:
+  - ref: 住房租赁条例.第十条
+    purpose: 押金数额、返还时间和扣减情形应在合同中约定
+  - ref: 民法典.第七百一十条
+    purpose: 按约定或租赁物性质使用造成的损耗
+  - ref: 民法典.第七百一十一条
+    purpose: 未按约定使用造成损失
+  - ref: 民法典.第七百一十三条
+    purpose: 租赁物维修责任
+  - ref: 民法典.第七百一十四条
+    purpose: 保管不善造成毁损
+  - ref: 民法典.第七百三十三条
+    purpose: 租赁物返还状态
+  - ref: 住房租赁条例.第三十五条
+    purpose: 押金返还纠纷处理路径
+
+rules:
+  - id: normal_wear
+    when:
+      eq:
+        slot: landlord_reason
+        value: normal_wear
+    verdict: normal_wear_not_compensable
+    key_point: 按约定方法或租赁物性质正常使用形成的损耗，与可归责损坏需要分别核对。
+  - id: no_reason_outside_contract
+    when:
+      all:
+        - eq:
+            slot: landlord_reason
+            value: no_reason
+        - eq:
+            slot: contract_has_deduction_term
+            value: false
+    verdict: deduction_lacks_stated_basis
+    key_point: 当前材料未显示合同约定的扣减情形，房东也未说明正当理由。
+  - id: documented_real_damage
+    when:
+      all:
+        - eq:
+            slot: landlord_reason
+            value: real_damage
+        - eq:
+            slot: landlord_has_receipt
+            value: true
+    verdict: documented_damage_may_support_deduction
+    key_point: 需要把实际损坏、责任归属和维修费用凭证逐项对应，扣减不应超过可说明的合理损失。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 钉孔、轻微划痕、欠费、提前退租或证据不足等情形，需要结合合同和具体材料继续核对。
+
+evidence_now:
+  - 租赁合同、补充协议和押金支付凭证
+  - 入住与退房时的照片、视频及交接记录
+  - 房东说明扣款理由和金额的聊天、短信或书面通知
+  - 维修报价、发票、收据和损坏部位对应材料
+  - 水电燃气、物业费用结清凭证及协商记录
+
+actions:
+  - 先备份合同、支付凭证、退房影像和全部沟通记录，并保留原始文件。
+  - 书面要求房东逐项说明扣减依据、金额计算方式和对应凭证。
+  - 对照合同约定区分正常使用损耗、实际损坏、欠费和提前退租责任。
+  - 对无争议部分先要求返还，并为回复设置一个合理期限。
+  - 协商不成时，可依法申请调解、仲裁或者提起诉讼，并携带完整证据。
+
+limitations:
+  - 本结果只整理已提供事实和已核验法条，不代替对合同全文、证据真实性和当地程序的专业审查。
+  - 钉孔、划痕等是否属于正常损耗取决于具体程度、合同约定、使用年限和证据，不能只凭名称确定。
+  - 民事一般诉讼时效条文尚未纳入本项目已核验法条库，本场景不计算确定截止日。
+
+escalation:
+  - id: large_unexplained_gap
+    when:
+      all:
+        - gte:
+            slot: withheld_amount
+            value: 50000
+        - neq:
+            slot: landlord_reason
+            value: no_reason
+    message: 扣减金额较高且责任事实复杂，建议携带合同和损失凭证咨询当地专业人员。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2

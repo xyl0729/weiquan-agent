@@ -5,7 +5,26 @@ from typing import Protocol
 
 from fastapi import HTTPException, Request, status
 
+from app.agent.errors import (
+    DataIntegrityError,
+    ProviderError,
+    StorageUnavailableError,
+)
+from app.agent.pipeline import ConsultationPipeline
 from app.config import Settings
+from app.db.session import SessionStore
+from app.history.service import SessionHistoryService
+from app.jurisdiction.rules import JurisdictionRegistry
+from app.limits.circuit import DailySpendCircuit
+from app.limits.rate_limit import DailyRateLimiter
+from app.limits.usage import (
+    ProviderUsageControls,
+    UsagePricer,
+    UsageTracker,
+)
+from app.playbooks.registry import PlaybookRegistry
+from app.providers.factory import create_provider
+from app.rendering.renderer import PlanRenderer
 
 
 class CircuitState(Protocol):
@@ -73,3 +92,102 @@ def resolve_credential(
 def request_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
+
+def get_active_settings(request: Request) -> Settings:
+    return request.app.state.settings
+
+
+def get_session_store(request: Request) -> SessionStore:
+    existing = getattr(request.app.state, "session_store", None)
+    if isinstance(existing, SessionStore):
+        return existing
+
+    pipeline = getattr(
+        request.app.state,
+        "consultation_pipeline",
+        None,
+    )
+    pipeline_store = getattr(pipeline, "store", None)
+    if isinstance(pipeline_store, SessionStore):
+        request.app.state.session_store = pipeline_store
+        return pipeline_store
+
+    settings = get_active_settings(request)
+    try:
+        store = SessionStore(
+            settings.database_path,
+            ttl_hours=settings.session_ttl_hours,
+        )
+        store.initialize()
+    except (OSError, ValueError) as exc:
+        raise StorageUnavailableError() from exc
+    request.app.state.session_store = store
+    return store
+
+
+def get_session_history_service(
+    request: Request,
+) -> SessionHistoryService:
+    return SessionHistoryService(get_session_store(request))
+
+
+def get_consultation_pipeline(request: Request) -> ConsultationPipeline:
+    existing = getattr(request.app.state, "consultation_pipeline", None)
+    if existing is not None:
+        return existing
+
+    settings = get_active_settings(request)
+    try:
+        store = get_session_store(request)
+        registry = PlaybookRegistry.from_directory(
+            settings.playbooks_path
+        )
+        registry.verify_references(settings.statute_database_path)
+        jurisdictions = JurisdictionRegistry.from_path(
+            settings.jurisdiction_path
+        )
+        renderer = PlanRenderer(settings.templates_path)
+        provider = create_provider(settings)
+        usage_controls = ProviderUsageControls(
+            enabled=provider.name == "deepseek",
+            provider=provider.name,
+            rate_limiter=DailyRateLimiter(
+                store,
+                limit=settings.free_quota_per_day,
+            ),
+            circuit=DailySpendCircuit(
+                store,
+                provider=provider.name,
+                limit_usd=settings.daily_spend_limit_usd,
+            ),
+            pricer=UsagePricer(
+                input_per_million=(
+                    settings.deepseek_price_input_per_million
+                ),
+                output_per_million=(
+                    settings.deepseek_price_output_per_million
+                ),
+            ),
+            tracker=UsageTracker(store),
+        )
+    except ProviderError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise DataIntegrityError(
+            "dependency_integrity_failed",
+            "本地咨询依赖未通过完整性检查",
+        ) from exc
+    except Exception as exc:
+        raise StorageUnavailableError() from exc
+
+    pipeline = ConsultationPipeline(
+        settings=settings,
+        store=store,
+        registry=registry,
+        provider=provider,
+        jurisdictions=jurisdictions,
+        renderer=renderer,
+        usage_controls=usage_controls,
+    )
+    request.app.state.consultation_pipeline = pipeline
+    return pipeline

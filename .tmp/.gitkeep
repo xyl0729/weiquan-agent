@@ -1,0 +1,1 @@
+# Keeps pytest.ini's workspace-local basetemp parent available in a fresh checkout.

@@ -1,0 +1,149 @@
+version: 1.0.0
+id: prepaid_card
+name: 预付卡与预付款纠纷
+aliases:
+  - 预付卡
+  - 储值卡退款
+  - 预付款退款
+jurisdiction_mode: national
+
+slots:
+  required:
+    - name: issue_type
+      type: enum
+      values:
+        - service_not_provided
+        - missing_written_contract
+        - closure
+        - business_risk
+        - unfair_term
+        - dispute_channel
+        - other
+      ask: 争议主要是不按约定提供服务、未签书面合同、停业风险、概不退款条款，还是处理渠道问题？
+  optional:
+    - name: remaining_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: has_written_contract
+      type: boolean
+      default: null
+    - name: has_payment_proof
+      type: boolean
+      default: false
+    - name: contract_text
+      type: string
+      max_length: 2000
+      default: null
+
+verdicts:
+  - code: performance_or_refund_supported
+    label: 未按约定提供预付服务时可要求履行或退回预付款
+    status: ready
+  - code: written_contract_terms_required
+    label: 预付款交易应核对书面合同和退款约定
+    status: ready
+  - code: unused_balance_refund_supported
+    label: 停业等情形下可要求核对并退还未消费余额
+    status: ready
+  - code: stop_collecting_due_to_risk
+    label: 重大经营风险可能触发停止收取预付款要求
+    status: ready
+  - code: unfair_refund_term_requires_review
+    label: 概不退款等格式条款应按消费者权益规则审查
+    status: ready
+  - code: consumer_dispute_channels_available
+    label: 可按法定消费者争议渠道继续处理
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对合同、付款、履行和余额事实
+    status: need_more_facts
+
+legal_basis:
+  - ref: 消费者权益保护法.第五十三条
+    purpose: 未按约定提供预付商品或服务时的履行、退款及合理费用规则
+  - ref: 消费者权益保护法.第三十九条
+    purpose: 消费者争议的协商、调解、投诉、仲裁和诉讼渠道
+  - ref: 消费者权益保护法.第二十六条
+    purpose: 格式条款提示说明义务及不公平不合理内容的效力
+  - ref: 消费者权益保护法实施条例.第二十二条
+    purpose: 书面合同、正常履约、经营风险和未消费余额退款要求
+
+rules:
+  - id: service_not_provided
+    when:
+      eq:
+        slot: issue_type
+        value: service_not_provided
+    verdict: performance_or_refund_supported
+    key_point: 先把约定服务内容、已履行部分和未履行部分对应清楚；未按约定提供时，可据此要求继续履行或者退回相应预付款。
+  - id: missing_written_contract
+    when:
+      eq:
+        slot: issue_type
+        value: missing_written_contract
+    verdict: written_contract_terms_required
+    key_point: 预付款交易应有书面合同，并明确服务内容、费用、退款方式和违约责任；现有交易材料需要按这些项目补齐核对。
+  - id: closure
+    when:
+      eq:
+        slot: issue_type
+        value: closure
+    verdict: unused_balance_refund_supported
+    key_point: 对决定停业、迁移或无法继续正常履约的经营者，应尽快固定剩余次数和余额，并书面要求继续履行或退还未消费部分。
+  - id: business_risk
+    when:
+      eq:
+        slot: issue_type
+        value: business_risk
+    verdict: stop_collecting_due_to_risk
+    key_point: 出现可能影响正常履约的重大经营风险时，应重点核对经营者是否仍在收取新的预付款以及风险证据。
+  - id: unfair_term
+    when:
+      eq:
+        slot: issue_type
+        value: unfair_term
+    verdict: unfair_refund_term_requires_review
+    key_point: 对任何情况下概不退款等条款，应结合是否排除消费者权利、免除经营者责任以及是否显著提示逐项审查。
+  - id: dispute_channel
+    when:
+      eq:
+        slot: issue_type
+        value: dispute_channel
+    verdict: consumer_dispute_channels_available
+    key_point: 协商不成后，可依次考虑消费者组织调解、行政投诉、按仲裁协议仲裁或向人民法院起诉。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 当前争议类型尚不足以对应确定规则，需要继续核对合同、付款记录、消费明细、经营状态和退款回复。
+
+evidence_now:
+  - 预付卡合同、会员协议、办卡页面和退款规则截图
+  - 付款凭证、发票、收据及每次消费扣减明细
+  - 剩余金额、剩余次数和账户页面的带时间截图
+  - 经营者停业、迁址、经营异常或拒绝履行的通知和现场材料
+  - 与经营者协商履行或退款的聊天、短信、邮件和书面回复
+
+actions:
+  - 立即导出并备份合同、付款凭证、消费记录、余额页面和全部沟通记录。
+  - 按已付款、已消费和未消费三部分制作金额明细，保留计算依据。
+  - 书面要求经营者在合理期限内说明履行安排、退款金额和计算方式。
+  - 涉及格式条款时，单独标出概不退款、限制解除或加重消费者责任的内容。
+  - 协商无果时，携带完整材料选择调解、行政投诉、仲裁或诉讼渠道。
+
+limitations:
+  - 本结果以消费者为生活消费接受服务为前提；生产经营用途、特许经营或投资类安排需要另行判断。
+  - 实际退款金额仍取决于合同、已履行服务价值、赠送项目、有效期约定和可核实的余额。
+  - 经营者是否存在重大经营风险需要客观材料支持，不能只凭传言确定。
+
+escalation:
+  - id: high_remaining_balance
+    when:
+      gte:
+        slot: remaining_amount
+        value: 50000
+    message: 未消费余额较高，建议在采取集体维权、财产保全或诉讼行动前由当地专业人员核对主体和证据。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2

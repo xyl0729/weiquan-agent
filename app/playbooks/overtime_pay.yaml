@@ -1,0 +1,224 @@
+version: 1.0.0
+id: overtime_pay
+name: 加班工资与劳动报酬
+aliases:
+  - 加班费
+  - 拖欠工资
+  - 劳动仲裁
+jurisdiction_mode: national
+
+slots:
+  required:
+    - name: issue_type
+      type: enum
+      values:
+        - working_time_limit
+        - overtime_compensation
+        - forced_overtime
+        - wage_arrears
+        - payment_order
+        - administrative_remedy
+        - arbitration_limit
+        - evidence_burden
+        - dispute_path
+        - arbitration_jurisdiction
+        - other
+      ask: 争议主要涉及加班时长、加班费标准、强迫加班、欠薪、证据、仲裁时效还是处理程序？
+  optional:
+    - name: claimed_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: dispute_date
+      type: date
+      default: null
+    - name: overtime_kind
+      type: enum
+      values:
+        - workday
+        - rest_day
+        - statutory_holiday
+        - mixed
+        - unknown
+      default: unknown
+    - name: has_overtime_records
+      type: boolean
+      default: false
+    - name: employer_controls_records
+      type: boolean
+      default: false
+    - name: employment_ongoing
+      type: boolean
+      default: null
+
+verdicts:
+  - code: working_time_limits_apply
+    label: 延长工作时间应受每日和每月法定上限约束
+    status: ready
+  - code: overtime_pay_rules_apply
+    label: 应按加班类型核对相应工资报酬标准
+    status: ready
+  - code: forced_overtime_requires_review
+    label: 强迫加班和未支付加班费应分别核对
+    status: ready
+  - code: timely_full_wage_payment_required
+    label: 工资应按月及时足额支付
+    status: ready
+  - code: payment_order_may_be_requested
+    label: 拖欠劳动报酬可依法核对支付令路径
+    status: ready
+  - code: administrative_remedy_available
+    label: 可向劳动行政部门反映未付加班费等问题
+    status: ready
+  - code: arbitration_limit_requires_calculation
+    label: 应核对一年仲裁时效及其中断、中止和特别规则
+    status: ready
+  - code: overtime_evidence_rules_apply
+    label: 加班事实及单位控制证据应按举证规则核对
+    status: ready
+  - code: staged_dispute_resolution
+    label: 劳动争议可按协商、调解、仲裁和诉讼路径处理
+    status: ready
+  - code: arbitration_venue_rule_applies
+    label: 仲裁管辖应核对合同履行地和单位所在地
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对劳动关系、加班安排、工资和证据
+    status: need_more_facts
+
+legal_basis:
+  - ref: 劳动法.第四十一条
+    purpose: 延长工作时间的协商要求及每日、每月上限
+  - ref: 劳动法.第四十四条
+    purpose: 工作日、休息日和法定休假日加班工资标准
+  - ref: 劳动法.第五十条
+    purpose: 工资按月支付及禁止克扣、无故拖欠
+  - ref: 劳动合同法.第三十条
+    purpose: 及时足额支付劳动报酬及支付令路径
+  - ref: 劳动合同法.第三十一条
+    purpose: 禁止强迫加班和安排加班应支付加班费
+  - ref: 劳动合同法.第八十五条
+    purpose: 劳动行政部门责令支付和逾期加付赔偿金规则
+  - ref: 劳动争议调解仲裁法.第五条
+    purpose: 协商、调解、仲裁及后续诉讼路径
+  - ref: 劳动争议调解仲裁法.第二十一条
+    purpose: 劳动合同履行地和用人单位所在地仲裁管辖
+  - ref: 劳动争议调解仲裁法.第二十七条
+    purpose: 一年仲裁时效及中断、中止和拖欠报酬特别规则
+  - ref: 劳动争议司法解释（一）.第四十二条
+    purpose: 加班事实及用人单位掌握证据时的举证责任
+
+rules:
+  - id: working_time_limit
+    when:
+      eq:
+        slot: issue_type
+        value: working_time_limit
+    verdict: working_time_limits_apply
+    key_point: 应把每日延长时数、每月累计时数、协商过程和特殊原因分别列明，再与法定上限逐项核对。
+  - id: overtime_compensation
+    when:
+      eq:
+        slot: issue_type
+        value: overtime_compensation
+    verdict: overtime_pay_rules_apply
+    key_point: 工作日延时、休息日且不能补休、法定休假日工作的计算标准不同，需先按日期和班次分类。
+  - id: forced_overtime
+    when:
+      eq:
+        slot: issue_type
+        value: forced_overtime
+    verdict: forced_overtime_requires_review
+    key_point: 是否存在强迫或变相强迫，以及单位是否依法支付加班费，是两个需要分别固定证据的问题。
+  - id: wage_arrears
+    when:
+      eq:
+        slot: issue_type
+        value: wage_arrears
+    verdict: timely_full_wage_payment_required
+    key_point: 应按工资周期整理应发、实发、未发金额和支付日期，核对是否存在克扣或无故拖欠。
+  - id: payment_order
+    when:
+      eq:
+        slot: issue_type
+        value: payment_order
+    verdict: payment_order_may_be_requested
+    key_point: 对拖欠或未足额支付劳动报酬的情形，可携带劳动关系和欠付金额材料向有管辖权的法院核对支付令申请条件。
+  - id: administrative_remedy
+    when:
+      eq:
+        slot: issue_type
+        value: administrative_remedy
+    verdict: administrative_remedy_available
+    key_point: 对未及时足额支付劳动报酬或加班费的问题，可向劳动行政部门提交材料，请求依法核查处理。
+  - id: arbitration_limit
+    when:
+      eq:
+        slot: issue_type
+        value: arbitration_limit
+    verdict: arbitration_limit_requires_calculation
+    key_point: 仲裁时效通常从知道或应当知道权利受侵害之日起计算，但中断、中止及劳动关系存续期间拖欠报酬存在特别规则。
+  - id: evidence_burden
+    when:
+      eq:
+        slot: issue_type
+        value: evidence_burden
+    verdict: overtime_evidence_rules_apply
+    key_point: 劳动者原则上需证明加班事实；能够证明相关记录由单位掌握而单位拒不提供时，应保留该线索供仲裁机构审查。
+  - id: dispute_path
+    when:
+      eq:
+        slot: issue_type
+        value: dispute_path
+    verdict: staged_dispute_resolution
+    key_point: 可根据实际情况先协商或调解，仍未解决时申请劳动仲裁；对裁决不服的后续路径需按具体裁决类型核对。
+  - id: arbitration_jurisdiction
+    when:
+      eq:
+        slot: issue_type
+        value: arbitration_jurisdiction
+    verdict: arbitration_venue_rule_applies
+    key_point: 劳动争议通常由劳动合同履行地或用人单位所在地仲裁委员会管辖，双方分别申请时应注意履行地优先规则。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 当前信息不足以确定争议类型，应继续核对劳动关系、工作日期时段、工资基数、支付记录和用人单位主体。
+
+evidence_now:
+  - 劳动合同、入职材料、社保记录和能够证明劳动关系的文件
+  - 考勤、排班、门禁、打卡、工单、系统登录和工作成果记录
+  - 工资条、银行流水、薪酬制度及加班费计算明细
+  - 安排加班、申请加班、拒绝加班或要求补休的聊天和邮件
+  - 向单位主张权利、投诉、调解或仲裁的送达和受理记录
+
+actions:
+  - 按日期制作加班明细，逐日记录起止时间、工作内容、安排人和对应证据。
+  - 将工作日、休息日和法定休假日分开统计，并保存工资基数来源。
+  - 书面向单位核对考勤和工资差额，保留提出主张及单位回复的证据。
+  - 立即核对仲裁时效，特别记录劳动关系终止日、首次主张日和可能的中断事由。
+  - 选择劳动行政投诉、调解或仲裁前，先确认用人单位名称和有管辖权的受理机构。
+
+limitations:
+  - 加班费金额取决于工资基数、工时制度、加班类型、补休事实和有效证据，本 playbook 不直接计算最终金额。
+  - 特殊工时制度、管理岗位、值班与加班区分等问题需要结合审批文件和具体工作强度另行审查。
+  - 一年仲裁时效存在中断、中止及劳动关系存续期间拖欠报酬的特别规则，不能只按单一日期机械判断。
+
+escalation:
+  - id: high_value_labor_claim
+    when:
+      gte:
+        slot: claimed_amount
+        value: 100000
+    message: 主张金额较高，建议在申请仲裁前由当地劳动法律专业人员核对工资基数、时效和证据链。
+
+time_limit:
+  label: 劳动争议仲裁申请时效
+  start_slot: dispute_date
+  amount: 1
+  unit: years
+  legal_ref: 劳动争议调解仲裁法.第二十七条
+  reminder: 起算点、中断、中止以及劳动关系存续期间拖欠劳动报酬的特别规则必须结合具体事实另行核对。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2

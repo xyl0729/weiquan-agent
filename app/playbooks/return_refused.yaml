@@ -1,0 +1,156 @@
+version: 1.0.0
+id: return_refused
+name: 退货换货被拒
+aliases:
+  - 七天无理由退货
+  - 商家拒绝退货
+  - 质量问题退换货
+jurisdiction_mode: national
+
+slots:
+  required:
+    - name: issue_type
+      type: enum
+      values:
+        - seven_day_return
+        - unpacked_inspection
+        - default_no_return_option
+        - quality_problem
+        - durable_goods_evidence
+        - order_formation
+        - other
+      ask: 争议主要涉及七天无理由、拆包查验、默认勾选不退、质量问题、耐用品举证还是订单成立？
+  optional:
+    - name: purchase_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: purchase_date
+      type: date
+      default: null
+    - name: received_date
+      type: date
+      default: null
+    - name: goods_intact
+      type: boolean
+      default: null
+    - name: excluded_category
+      type: boolean
+      default: null
+    - name: consumer_confirmed_exclusion
+      type: boolean
+      default: null
+
+verdicts:
+  - code: seven_day_return_requires_check
+    label: 网购七天无理由退货条件应逐项核对
+    status: ready
+  - code: reasonable_inspection_not_automatic_bar
+    label: 合理拆包查验不当然排除无理由退货
+    status: ready
+  - code: default_exclusion_not_sufficient
+    label: 默认勾选不退不能替代消费者确认
+    status: ready
+  - code: quality_remedies_available
+    label: 质量不符合要求时可核对退换修等救济
+    status: ready
+  - code: durable_goods_evidence_rule
+    label: 部分耐用商品六个月内瑕疵适用特别举证规则
+    status: ready
+  - code: submitted_order_may_form_contract
+    label: 提交订单成功后的合同成立应按法定规则核对
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对商品类别、收货日期、完好状态和质量证据
+    status: need_more_facts
+
+legal_basis:
+  - ref: 消费者权益保护法.第二十三条
+    purpose: 商品质量承诺及部分耐用品六个月内瑕疵举证
+  - ref: 消费者权益保护法.第二十四条
+    purpose: 质量不符合要求时的退货、更换、修理和必要运输费用
+  - ref: 消费者权益保护法.第二十五条
+    purpose: 网购七天无理由退货、例外、商品完好和退款规则
+  - ref: 消费者权益保护法实施条例.第十九条
+    purpose: 不得擅自扩大例外、不得默认同意及合理拆包查验
+  - ref: 电子商务法.第四十九条
+    purpose: 提交订单成功后的合同成立和相关格式条款效力
+
+rules:
+  - id: seven_day_return
+    when:
+      eq:
+        slot: issue_type
+        value: seven_day_return
+    verdict: seven_day_return_requires_check
+    key_point: 应以实际收货日、商品类别、是否属于法定例外、消费者是否确认例外以及商品是否完好为核心逐项核对。
+  - id: unpacked_inspection
+    when:
+      eq:
+        slot: issue_type
+        value: unpacked_inspection
+    verdict: reasonable_inspection_not_automatic_bar
+    key_point: 为查验商品或确认品质功能进行合理拆包调试，且未影响原有品质、功能和外观的，不应仅因拆包一项拒绝退货。
+  - id: default_no_return_option
+    when:
+      eq:
+        slot: issue_type
+        value: default_no_return_option
+    verdict: default_exclusion_not_sufficient
+    key_point: 不适用无理由退货应显著标注并由消费者购买时确认，平台默认勾选不能替代该确认。
+  - id: quality_problem
+    when:
+      eq:
+        slot: issue_type
+        value: quality_problem
+    verdict: quality_remedies_available
+    key_point: 商品不符合质量要求时，应根据国家规定、约定、收货时间和解除条件核对退货、更换、修理及必要运输费用。
+  - id: durable_goods_evidence
+    when:
+      eq:
+        slot: issue_type
+        value: durable_goods_evidence
+    verdict: durable_goods_evidence_rule
+    key_point: 对法条列明的耐用商品等，自接受商品之日起六个月内发现瑕疵发生争议的，应注意经营者承担有关瑕疵举证责任的规则。
+  - id: order_formation
+    when:
+      eq:
+        slot: issue_type
+        value: order_formation
+    verdict: submitted_order_may_form_contract
+    key_point: 商品或服务信息符合要约条件且用户提交订单成功时，原则上合同成立；另有有效约定的情形需要核对约定全文。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 当前事实不足以判断适用无理由退货还是质量救济，需要补充收货、商品性质、使用状态、瑕疵和商家拒绝理由。
+
+evidence_now:
+  - 商品页面、订单详情、付款记录、物流签收和实际收货日期
+  - 退货规则、不适用无理由退货提示及购买时确认过程截图
+  - 商品现状照片、开箱视频、包装附件和序列号记录
+  - 质量问题照片、检测材料、维修记录和商家质量承诺
+  - 提交退货申请、寄回商品和商家拒绝理由的完整沟通记录
+
+actions:
+  - 立即保存商品页面、订单、物流、退货规则和商家拒绝页面的完整截图。
+  - 核对实际收货日期，不要用下单日或付款日替代七日期间的起点。
+  - 保持商品、包装、配件和赠品现状，并用照片或视频记录查验程度。
+  - 书面选择无理由退货或质量救济依据，明确退款、退换修和运费请求。
+  - 商家仍拒绝时，向平台投诉并保留平台处理结果，再选择行政投诉或诉讼。
+
+limitations:
+  - 七天无理由退货存在定作、鲜活易腐、特定数字化商品、报刊等法定例外，其他不宜退货商品还需消费者购买时确认。
+  - 本项目不以购买日期代替实际收货日期，也不在缺少收货日期时计算七天截止日。
+  - 商品是否完好、拆包是否仅为合理查验以及质量瑕疵是否成立，均需要结合具体商品和证据判断。
+
+escalation:
+  - id: high_value_return
+    when:
+      gte:
+        slot: purchase_amount
+        value: 50000
+    message: 商品金额较高，建议在寄回、检测或诉讼前由专业人员核对商品保全、检验方式和责任主体。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2

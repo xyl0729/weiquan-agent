@@ -1,20 +1,324 @@
-placeholder_data: true
-warning: 仅用于验证测试框架；必须替换为至少 50 条人工标注的真实口语问题。
+placeholder_data: false
+warning: 召回样本已由用户依据 docs/legal-data-verification-checklist.md 逐条核验；样本或法条变更后需重新运行数据门禁。
 minimum_cases: 50
 minimum_recall_at_5: 0.90
 cases:
-  - id: placeholder-deposit
-    query: 押金一直不退
+  - id: deposit-01
+    query: 房东收了押金，合同里没写什么时候退
     expected_refs:
-      - 测试法.第一条
+      - 住房租赁条例.第十条
 
-  - id: placeholder-prepaid
-    query: 预付卡商家停业了
+  - id: deposit-02
+    query: 退租后房东没有正当理由扣我的押金
     expected_refs:
-      - 测试法.第二条
+      - 住房租赁条例.第十条
 
-  - id: placeholder-overtime
-    query: 加班工资没有发
+  - id: deposit-03
+    query: 正常住旧了产生自然损耗，房东还让我赔
     expected_refs:
-      - 测试法.第三条
+      - 民法典.第七百一十条
 
+  - id: deposit-04
+    query: 我没按约定使用出租屋，弄坏东西后房东要求赔偿
+    expected_refs:
+      - 民法典.第七百一十一条
+
+  - id: deposit-05
+    query: 出租屋设施坏了，房东一直不维修，我能自己修吗
+    expected_refs:
+      - 民法典.第七百一十三条
+
+  - id: deposit-06
+    query: 租来的家具因为保管不善损坏了，谁承担赔偿
+    expected_refs:
+      - 民法典.第七百一十四条
+
+  - id: deposit-07
+    query: 退租交房时，房子应该返还到什么状态
+    expected_refs:
+      - 民法典.第七百三十三条
+
+  - id: deposit-08
+    query: 押金返还纠纷协商不成，接下来可以怎么办
+    expected_refs:
+      - 住房租赁条例.第三十五条
+
+  - id: prepaid-01
+    query: 健身房收了预付款却不按约定提供服务，能退款吗
+    expected_refs:
+      - 消费者权益保护法.第五十三条
+
+  - id: prepaid-02
+    query: 商家不提供预付服务，退钱时还要承担利息和合理费用吗
+    expected_refs:
+      - 消费者权益保护法.第五十三条
+
+  - id: prepaid-03
+    query: 办预付卡时商家不签书面合同，也不写退款方式
+    expected_refs:
+      - 消费者权益保护法实施条例.第二十二条
+
+  - id: prepaid-04
+    query: 健身房决定停业，没消费完的卡里余额怎么退
+    expected_refs:
+      - 消费者权益保护法实施条例.第二十二条
+
+  - id: prepaid-05
+    query: 商家经营风险很大，可能无法履约还在继续收预付款
+    expected_refs:
+      - 消费者权益保护法实施条例.第二十二条
+
+  - id: prepaid-06
+    query: 预付卡消费纠纷协商不成，可以找哪些部门处理
+    expected_refs:
+      - 消费者权益保护法.第三十九条
+
+  - id: prepaid-07
+    query: 预付卡合同写着任何情况概不退款，这种格式条款有效吗
+    expected_refs:
+      - 消费者权益保护法.第二十六条
+
+  - id: overtime-01
+    query: 公司要求每天加班四小时，每个月超过三十六小时
+    expected_refs:
+      - 劳动法.第四十一条
+
+  - id: overtime-02
+    query: 工作日延长工作时间，加班工资是不是百分之一百五十
+    expected_refs:
+      - 劳动法.第四十四条
+
+  - id: overtime-03
+    query: 周末加班又不给补休，是不是应该发双倍工资
+    expected_refs:
+      - 劳动法.第四十四条
+
+  - id: overtime-04
+    query: 法定节假日上班，加班费是不是三倍工资
+    expected_refs:
+      - 劳动法.第四十四条
+
+  - id: overtime-05
+    query: 老板强迫员工加班，而且不支付加班费
+    expected_refs:
+      - 劳动合同法.第三十一条
+
+  - id: overtime-06
+    query: 工资没有按月发，公司一直无故拖欠
+    expected_refs:
+      - 劳动法.第五十条
+
+  - id: overtime-07
+    query: 公司拖欠劳动报酬，我能向法院申请支付令吗
+    expected_refs:
+      - 劳动合同法.第三十条
+
+  - id: overtime-08
+    query: 劳动行政部门能责令公司限期补发加班费和加付赔偿金吗
+    expected_refs:
+      - 劳动合同法.第八十五条
+
+  - id: overtime-09
+    query: 申请加班费劳动仲裁的时效是一年吗
+    expected_refs:
+      - 劳动争议调解仲裁法.第二十七条
+
+  - id: overtime-10
+    query: 加班记录都在公司手里，主张加班费时谁负责举证
+    expected_refs:
+      - 劳动争议司法解释（一）.第四十二条
+
+  - id: overtime-11
+    query: 劳动争议协商不成后，是先调解仲裁再去法院吗
+    expected_refs:
+      - 劳动争议调解仲裁法.第五条
+
+  - id: overtime-12
+    query: 劳动仲裁应该找合同履行地还是公司所在地
+    expected_refs:
+      - 劳动争议调解仲裁法.第二十一条
+
+  - id: return-01
+    query: 网购买到商品七天内不想要，可以不说明理由退货吗
+    expected_refs:
+      - 消费者权益保护法.第二十五条
+
+  - id: return-02
+    query: 网店说拆开包装就一律不能七天无理由退货
+    expected_refs:
+      - 消费者权益保护法实施条例.第十九条
+
+  - id: return-03
+    query: 商家默认勾选不支持无理由退货，我购买时没有确认
+    expected_refs:
+      - 消费者权益保护法实施条例.第十九条
+
+  - id: return-04
+    query: 商品质量不符合要求，我能要求退货换货或者修理吗
+    expected_refs:
+      - 消费者权益保护法.第二十四条
+
+  - id: return-05
+    query: 质量问题退换货产生的运输费应该由谁承担
+    expected_refs:
+      - 消费者权益保护法.第二十四条
+
+  - id: return-06
+    query: 新买的冰箱六个月内发现瑕疵，应该由谁举证
+    expected_refs:
+      - 消费者权益保护法.第二十三条
+
+  - id: return-07
+    query: 网店说我已经付款但订单合同还没有成立
+    expected_refs:
+      - 电子商务法.第四十九条
+
+  - id: counterfeit-01
+    query: 商家销售假货，以假充真、以次充好
+    expected_refs:
+      - 产品质量法.第三十九条
+
+  - id: counterfeit-02
+    query: 商品与包装上注明的标准不符合，能要求退换修吗
+    expected_refs:
+      - 产品质量法.第四十条
+
+  - id: counterfeit-03
+    query: 商家欺诈卖假货，可以要求价款三倍赔偿吗
+    expected_refs:
+      - 消费者权益保护法.第五十五条
+
+  - id: counterfeit-04
+    query: 欺诈赔偿算出来不足五百元，最低是不是五百
+    expected_refs:
+      - 消费者权益保护法.第五十五条
+
+  - id: counterfeit-05
+    query: 平台知道店铺卖假货却不采取措施，要承担连带责任吗
+    expected_refs:
+      - 电子商务法.第三十八条
+
+  - id: counterfeit-06
+    query: 网购卖家失联，平台不能提供真实名称地址和联系方式
+    expected_refs:
+      - 消费者权益保护法.第四十四条
+
+  - id: counterfeit-07
+    query: 产品掺假会被处货值金额百分之五十到三倍罚款吗
+    expected_refs:
+      - 产品质量法.第五十条
+
+  - id: training-01
+    query: 报了培训班，机构没有按约定上课，我要求退预付款
+    expected_refs:
+      - 消费者权益保护法.第五十三条
+
+  - id: training-02
+    query: 培训机构要停业，没上的课费余额能不能退
+    expected_refs:
+      - 消费者权益保护法实施条例.第二十二条
+
+  - id: training-03
+    query: 培训协议限制我解除合同，还写着学费一概不退
+    expected_refs:
+      - 消费者权益保护法实施条例.第十七条
+
+  - id: training-04
+    query: 培训机构宣传的服务质量和实际提供的完全不一样
+    expected_refs:
+      - 消费者权益保护法.第二十三条
+
+  - id: training-05
+    query: 培训机构严重延迟开课，催告后还是不履行主要课程
+    expected_refs:
+      - 民法典.第五百六十三条
+
+  - id: training-06
+    query: 培训合同解除后，已经交的钱能要求恢复原状退回吗
+    expected_refs:
+      - 民法典.第五百六十六条
+
+  - id: auto-renewal-01
+    query: 会员自动续费之前，平台没有用显著方式提醒我
+    expected_refs:
+      - 消费者权益保护法实施条例.第十条
+
+  - id: auto-renewal-02
+    query: 连续包月自动展期，扣款日期前完全没有通知
+    expected_refs:
+      - 消费者权益保护法实施条例.第十条
+
+  - id: auto-renewal-03
+    query: 接受服务前没有提示会自动续费，后来直接扣款
+    expected_refs:
+      - 消费者权益保护法实施条例.第十条
+
+  - id: auto-renewal-04
+    query: 购买会员时默认勾选了搭售服务
+    expected_refs:
+      - 电子商务法.第十九条
+
+  - id: auto-renewal-05
+    query: 平台把增值服务作为默认同意选项一起收费
+    expected_refs:
+      - 电子商务法.第十九条
+
+  - id: auto-renewal-06
+    query: 自动续费藏在合同小字里，没有提示重大利害关系
+    expected_refs:
+      - 民法典.第四百九十六条
+
+  - id: renovation-01
+    query: 装修是按照业主要求完成工作并交付成果的承揽合同吗
+    expected_refs:
+      - 民法典.第七百七十条
+
+  - id: renovation-02
+    query: 装修交付质量不合格，能要求返工、少付钱或者赔偿吗
+    expected_refs:
+      - 民法典.第七百八十一条
+
+  - id: renovation-03
+    query: 装修公司完工前，业主可以随时解除承揽合同吗
+    expected_refs:
+      - 民法典.第七百八十七条
+
+  - id: renovation-04
+    query: 装修公司没有按照合同约定全面履行义务
+    expected_refs:
+      - 民法典.第五百零九条
+
+  - id: renovation-05
+    query: 装修严重延期，催告后仍不施工，可以解除合同吗
+    expected_refs:
+      - 民法典.第五百六十三条
+
+  - id: renovation-06
+    query: 装修违约造成损失，赔偿额包括履行后可得利益吗
+    expected_refs:
+      - 民法典.第五百八十四条
+
+  - id: renovation-07
+    query: 装修合同约定的违约金过分高于损失，能请求减少吗
+    expected_refs:
+      - 民法典.第五百八十五条
+
+  - id: procedure-01
+    query: 金额不大的简单民事案件，小额诉讼是不是一审终审
+    expected_refs:
+      - 民事诉讼法.第一百六十五条
+
+  - id: procedure-02
+    query: 装修纠纷需要评估鉴定，还能适用小额诉讼吗
+    expected_refs:
+      - 民事诉讼法.第一百六十六条
+
+  - id: procedure-03
+    query: 小额诉讼立案后一般几个月内审结
+    expected_refs:
+      - 民事诉讼法.第一百六十八条
+
+  - id: procedure-04
+    query: 我认为法院错误适用小额诉讼程序，可以提出异议吗
+    expected_refs:
+      - 民事诉讼法.第一百六十九条

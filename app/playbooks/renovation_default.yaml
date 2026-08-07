@@ -1,0 +1,178 @@
+version: 1.0.0
+id: renovation_default
+name: 装修合同违约
+aliases:
+  - 装修违约
+  - 装修延期
+  - 装修返工
+jurisdiction_mode: national
+
+slots:
+  required:
+    - name: issue_type
+      type: enum
+      values:
+        - contract_nature
+        - quality_problem
+        - owner_termination
+        - full_performance
+        - delayed_termination
+        - damages
+        - penalty_adjustment
+        - other
+      ask: 争议主要是合同性质、装修质量、完工前解除、未全面履行、严重延期、损失赔偿，还是违约金调整？
+  optional:
+    - name: contract_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: claimed_amount
+      type: number
+      minimum: 0
+      default: null
+    - name: has_written_contract
+      type: boolean
+      default: null
+    - name: has_acceptance_record
+      type: boolean
+      default: false
+    - name: has_written_notice
+      type: boolean
+      default: false
+    - name: safety_risk
+      type: boolean
+      default: false
+
+verdicts:
+  - code: renovation_may_be_contract_for_work
+    label: 装修关系可按完成工作并交付成果的承揽合同规则核对
+    status: ready
+  - code: quality_remedies_may_apply
+    label: 装修成果不符合质量要求时可核对修理重作减价或赔偿
+    status: ready
+  - code: owner_may_terminate_before_completion
+    label: 完工前定作人可核对随时解除及赔偿承揽人损失规则
+    status: ready
+  - code: full_contract_performance_required
+    label: 双方应按约定全面履行并遵循诚信原则
+    status: ready
+  - code: delayed_performance_may_support_termination
+    label: 严重迟延且催告后仍未履行时可核对法定解除条件
+    status: ready
+  - code: foreseeable_loss_rules_apply
+    label: 违约损失赔偿应核对实际损失、可得利益和可预见范围
+    status: ready
+  - code: penalty_may_be_adjusted_on_request
+    label: 约定违约金过高或过低时可依法请求适当调整
+    status: ready
+  - code: need_more_facts
+    label: 仍需核对合同、进度、验收、催告和损失证据
+    status: need_more_facts
+
+legal_basis:
+  - ref: 民法典.第五百零九条
+    purpose: 按约全面履行及诚信协作义务
+  - ref: 民法典.第五百六十三条
+    purpose: 迟延履行主要债务等法定解除条件
+  - ref: 民法典.第五百八十四条
+    purpose: 违约损失、可得利益和可预见性范围
+  - ref: 民法典.第五百八十五条
+    purpose: 违约金约定及过高过低时的请求调整规则
+  - ref: 民法典.第七百七十条
+    purpose: 承揽合同完成工作、交付成果和支付报酬的基本结构
+  - ref: 民法典.第七百八十一条
+    purpose: 工作成果质量不符合要求时的修理、重作、减价和赔偿责任
+  - ref: 民法典.第七百八十七条
+    purpose: 定作人在工作完成前随时解除及赔偿损失规则
+
+rules:
+  - id: contract_nature
+    when:
+      eq:
+        slot: issue_type
+        value: contract_nature
+    verdict: renovation_may_be_contract_for_work
+    key_point: 应根据是否按业主要求完成特定工作、交付装修成果并支付报酬，核对具体关系是否适用承揽合同规则，不能只看合同名称。
+  - id: quality_problem
+    when:
+      eq:
+        slot: issue_type
+        value: quality_problem
+    verdict: quality_remedies_may_apply
+    key_point: 对不符合约定或质量要求的装修成果，应固定缺陷范围、验收意见和修复方案，再合理选择修理、重作、减少报酬或赔偿损失。
+  - id: owner_termination
+    when:
+      eq:
+        slot: issue_type
+        value: owner_termination
+    verdict: owner_may_terminate_before_completion
+    key_point: 业主在工作完成前提出随时解除时，应同步核对已完成工程价值、已购材料、可避免损失及解除给承揽人造成的损失。
+  - id: full_performance
+    when:
+      eq:
+        slot: issue_type
+        value: full_performance
+    verdict: full_contract_performance_required
+    key_point: 应把施工范围、材料标准、工期、付款节点、变更签证和协作义务逐项对应，确认哪一方未按约全面履行。
+  - id: delayed_termination
+    when:
+      eq:
+        slot: issue_type
+        value: delayed_termination
+    verdict: delayed_performance_may_support_termination
+    key_point: 工程延期不当然导致解除；应固定主要义务的约定期限、催告到达、合理期限届满和仍未履行的事实。
+  - id: damages
+    when:
+      eq:
+        slot: issue_type
+        value: damages
+    verdict: foreseeable_loss_rules_apply
+    key_point: 损失主张应区分实际损失与履行后可得利益，并说明因果关系、减损措施以及订约时能够预见的范围。
+  - id: penalty_adjustment
+    when:
+      eq:
+        slot: issue_type
+        value: penalty_adjustment
+    verdict: penalty_may_be_adjusted_on_request
+    key_point: 违约金是否过分高于或低于损失，需要结合实际损失和履行情况审查，并由当事人依法提出调整请求。
+  - id: default_conservative
+    default: true
+    verdict: need_more_facts
+    key_point: 当前信息不足以确定争议类型，需要继续核对合同范围、施工进度、变更、验收、催告、付款和损失材料。
+
+evidence_now:
+  - 装修合同、预算报价、图纸、材料清单、工期表和补充协议
+  - 付款凭证、发票收据、工程量和材料进场记录
+  - 施工前后照片视频、施工日志、现场交接和隐蔽工程记录
+  - 变更签证、验收单、缺陷清单、检测鉴定和返工报价
+  - 催告、停工、延期、解除、索赔及双方回复的送达记录
+
+actions:
+  - 立即备份合同、图纸、报价、付款、变更和全部沟通原件。
+  - 按空间、工序和时间制作施工进度与缺陷清单，并用照片视频对应。
+  - 对争议工程先保全现状；需要拆除或返工时，记录拆改前状态和必要性。
+  - 书面要求对方在合理期限内说明复工、修复、结算或解除方案。
+  - 评估解除、返工或诉讼前，分别核算已完工程价值、修复费用和可证明损失。
+
+limitations:
+  - 装修合同可能同时包含承揽、买卖、设计等内容，具体规则需结合主要义务和合同全文判断。
+  - 质量缺陷、工程量和修复费用可能需要有资质的检测、鉴定或造价材料，本 playbook 不替代专业技术判断。
+  - 可得利益、违约金调整和解除损失均需证据支持，不能仅按合同总价或主观估算确定。
+
+escalation:
+  - id: construction_safety_risk
+    when:
+      eq:
+        slot: safety_risk
+        value: true
+    message: 涉及结构、消防、水电或其他人身财产安全风险，应先停止危险施工并联系有资质的专业人员检查和保全证据。
+  - id: high_value_renovation
+    when:
+      gte:
+        slot: contract_amount
+        value: 200000
+    message: 装修合同金额较高，建议在解除、拆改、鉴定或诉讼前由当地专业人员核对工程量、结算、证据保全和责任方案。
+
+templates:
+  plan: consultation_plan.j2
+  evidence: evidence_request.j2
