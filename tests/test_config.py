@@ -4,6 +4,40 @@ from pydantic import ValidationError
 from app.config import PROJECT_ROOT, Settings
 
 
+def production_values(tmp_path: object) -> dict[str, object]:
+    root = tmp_path
+    statutes = root / "statutes.db"
+    statutes.write_bytes(b"sqlite-placeholder")
+    return {
+        "_env_file": None,
+        "deployment_mode": "production",
+        "database_url": (
+            "postgresql+psycopg://weiquan:database-secret@"
+            "postgres:5432/weiquan"
+        ),
+        "public_base_url": "https://weiquan.example.test",
+        "cors_origins": "https://weiquan.example.test",
+        "cookie_secure": True,
+        "llm_provider": "deepseek",
+        "key_mode": "server",
+        "deepseek_api_key": "deepseek-secret-value",
+        "session_secret": "session-secret-value-with-at-least-32-bytes",
+        "ip_hmac_secret": "ip-hmac-secret-value-with-at-least-32-bytes",
+        "aliyun_access_key_id": "aliyun-access-key-id",
+        "aliyun_access_key_secret": "aliyun-access-key-secret",
+        "directmail_account_name": "notice@example.test",
+        "captcha_scene_id": "captcha-scene",
+        "oss_endpoint": "https://oss-cn-hangzhou.aliyuncs.com",
+        "oss_bucket": "weiquan-private-test",
+        "deletion_manifest_recipient": "age1productionrecipient",
+        "privacy_policy_version": "2026-08-10",
+        "statutes_db_path": statutes,
+        "attachment_temp_dir": root / "private" / "attachments",
+        "log_dir": root / "private" / "logs",
+        "backup_staging_dir": root / "private" / "backup-staging",
+    }
+
+
 def test_cors_origins_are_split_and_trimmed() -> None:
     settings = Settings(
         _env_file=None,
@@ -92,3 +126,116 @@ def test_attachment_temp_directory_stays_in_private_project_space(
             _env_file=None,
             attachment_temp_dir=attachment_temp_dir,
         )
+
+
+def test_local_and_test_modes_keep_safe_development_defaults() -> None:
+    local = Settings(_env_file=None)
+    test = Settings(_env_file=None, deployment_mode="test")
+
+    assert local.deployment_mode == "local"
+    assert local.database_dsn is None
+    assert local.cookie_secure is False
+    assert test.deployment_mode == "test"
+    assert test.database_dsn is None
+
+
+def test_complete_production_settings_are_accepted(tmp_path) -> None:
+    settings = Settings(**production_values(tmp_path))
+
+    assert settings.deployment_mode == "production"
+    assert settings.database_dsn.startswith("postgresql+psycopg://")
+    assert settings.public_origin == "https://weiquan.example.test"
+    assert settings.cookie_secure is True
+    assert settings.attachment_temp_path.is_absolute()
+
+
+def test_production_missing_fields_fail_without_exposing_secrets(
+    tmp_path,
+) -> None:
+    values = production_values(tmp_path)
+    secret_values = {
+        "database-secret",
+        "deepseek-secret-value",
+        "session-secret-value-with-at-least-32-bytes",
+        "ip-hmac-secret-value-with-at-least-32-bytes",
+        "aliyun-access-key-secret",
+    }
+    values.pop("captcha_scene_id")
+    values.pop("oss_bucket")
+
+    with pytest.raises(ValidationError) as caught:
+        Settings(**values)
+
+    error = str(caught.value)
+    assert "CAPTCHA_SCENE_ID" in error
+    assert "OSS_BUCKET" in error
+    assert all(secret not in error for secret in secret_values)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_name"),
+    [
+        (
+            "database_url",
+            "sqlite:///production.db",
+            "DATABASE_URL",
+        ),
+        (
+            "public_base_url",
+            "http://weiquan.example.test",
+            "PUBLIC_BASE_URL",
+        ),
+        ("cors_origins", "*", "CORS_ORIGINS"),
+        ("cookie_secure", False, "COOKIE_SECURE"),
+        ("llm_provider", "fake", "LLM_PROVIDER"),
+        ("key_mode", "byok", "KEY_MODE"),
+        ("session_secret", "short", "SESSION_SECRET"),
+        ("ip_hmac_secret", "short", "IP_HMAC_SECRET"),
+    ],
+)
+def test_production_rejects_insecure_values(
+    tmp_path,
+    field: str,
+    value: object,
+    expected_name: str,
+) -> None:
+    values = production_values(tmp_path)
+    values[field] = value
+
+    with pytest.raises(ValidationError) as caught:
+        Settings(**values)
+
+    assert expected_name in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected_name"),
+    [
+        ("attachment_temp_dir", "log_dir", "ATTACHMENT_TEMP_DIR"),
+        ("attachment_temp_dir", "backup_staging_dir", "ATTACHMENT_TEMP_DIR"),
+        ("log_dir", "backup_staging_dir", "LOG_DIR"),
+    ],
+)
+def test_production_private_paths_must_be_separate(
+    tmp_path,
+    first: str,
+    second: str,
+    expected_name: str,
+) -> None:
+    values = production_values(tmp_path)
+    values[second] = values[first]
+
+    with pytest.raises(ValidationError) as caught:
+        Settings(**values)
+
+    assert expected_name in str(caught.value)
+
+
+def test_production_requires_existing_statutes_database(tmp_path) -> None:
+    values = production_values(tmp_path)
+    values["statutes_db_path"] = tmp_path / "missing-statutes.db"
+
+    with pytest.raises(ValidationError) as caught:
+        Settings(**values)
+
+    assert "STATUTES_DB_PATH" in str(caught.value)

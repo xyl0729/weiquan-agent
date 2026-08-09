@@ -17,7 +17,28 @@ class Settings(BaseSettings):
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        hide_input_in_errors=True,
     )
+
+    deployment_mode: Literal["local", "test", "production"] = "local"
+    database_url: SecretStr | None = None
+    public_base_url: str | None = None
+    cookie_name: str = "weiquan_session"
+    cookie_secure: bool = False
+    session_secret: SecretStr | None = None
+    ip_hmac_secret: SecretStr | None = None
+    privacy_policy_version: str = "local-development"
+
+    aliyun_access_key_id: SecretStr | None = None
+    aliyun_access_key_secret: SecretStr | None = None
+    directmail_account_name: str = ""
+    directmail_from_alias: str = "维权咨询助手"
+    directmail_region: str = "cn-hangzhou"
+    captcha_scene_id: str = ""
+    captcha_endpoint: str = "captcha.cn-shanghai.aliyuncs.com"
+    oss_endpoint: str = ""
+    oss_bucket: str = ""
+    deletion_manifest_recipient: str = ""
 
     llm_provider: Literal["fake", "deepseek"] = "fake"
     deepseek_api_key: SecretStr | None = None
@@ -97,8 +118,19 @@ class Settings(BaseSettings):
         le=1,
     )
     attachment_temp_dir: Path = Path("./.tmp/attachments")
+    log_dir: Path = Path("./logs")
+    backup_staging_dir: Path = Path("./.tmp/backup-staging")
 
-    @field_validator("server_api_key", "deepseek_api_key", mode="before")
+    @field_validator(
+        "server_api_key",
+        "deepseek_api_key",
+        "database_url",
+        "session_secret",
+        "ip_hmac_secret",
+        "aliyun_access_key_id",
+        "aliyun_access_key_secret",
+        mode="before",
+    )
     @classmethod
     def empty_key_is_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -135,6 +167,45 @@ class Settings(BaseSettings):
             raise ValueError("DEEPSEEK_BASE_URL 不能包含 query 或 fragment")
         return normalized
 
+    @field_validator("public_base_url")
+    @classmethod
+    def normalize_public_base_url(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().rstrip("/")
+        if not normalized:
+            return None
+        parsed = urlparse(normalized)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("PUBLIC_BASE_URL 必须是无凭据的站点根 URL")
+        return normalized
+
+    @field_validator(
+        "directmail_account_name",
+        "directmail_from_alias",
+        "directmail_region",
+        "captcha_scene_id",
+        "captcha_endpoint",
+        "oss_endpoint",
+        "oss_bucket",
+        "deletion_manifest_recipient",
+        "privacy_policy_version",
+    )
+    @classmethod
+    def trim_service_text(cls, value: str) -> str:
+        return value.strip()
+
     @model_validator(mode="after")
     def validate_spend_prices(self) -> "Settings":
         prices = (
@@ -154,7 +225,10 @@ class Settings(BaseSettings):
             self.database_path,
             self.statute_database_path,
         }
-        if temp_path == root or not temp_path.is_relative_to(root):
+        if (
+            self.deployment_mode != "production"
+            and (temp_path == root or not temp_path.is_relative_to(root))
+        ):
             raise ValueError("附件临时目录必须位于项目根目录内")
         if (
             temp_path == static_path
@@ -167,6 +241,99 @@ class Settings(BaseSettings):
             raise ValueError("附件临时目录不能指向普通文件")
         return self
 
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> "Settings":
+        if self.deployment_mode != "production":
+            return self
+
+        invalid: set[str] = set()
+        dsn = self.database_dsn
+        if dsn is None or urlparse(dsn).scheme != "postgresql+psycopg":
+            invalid.add("DATABASE_URL")
+
+        parsed_public = urlparse(self.public_base_url or "")
+        if (
+            parsed_public.scheme != "https"
+            or not parsed_public.netloc
+            or parsed_public.hostname in {"localhost", "127.0.0.1", "::1"}
+        ):
+            invalid.add("PUBLIC_BASE_URL")
+
+        origins = self.allowed_origins
+        if (
+            not origins
+            or "*" in origins
+            or self.public_origin is None
+            or set(origins) != {self.public_origin}
+        ):
+            invalid.add("CORS_ORIGINS")
+
+        if not self.cookie_secure:
+            invalid.add("COOKIE_SECURE")
+        if self.llm_provider != "deepseek":
+            invalid.add("LLM_PROVIDER")
+        if self.key_mode != "server":
+            invalid.add("KEY_MODE")
+
+        required_secrets = {
+            "DEEPSEEK_API_KEY": self.deepseek_api_key,
+            "SESSION_SECRET": self.session_secret,
+            "IP_HMAC_SECRET": self.ip_hmac_secret,
+            "ALIYUN_ACCESS_KEY_ID": self.aliyun_access_key_id,
+            "ALIYUN_ACCESS_KEY_SECRET": self.aliyun_access_key_secret,
+        }
+        for field_name, secret in required_secrets.items():
+            if secret is None:
+                invalid.add(field_name)
+
+        for field_name, secret in {
+            "SESSION_SECRET": self.session_secret,
+            "IP_HMAC_SECRET": self.ip_hmac_secret,
+        }.items():
+            if (
+                secret is not None
+                and len(secret.get_secret_value().encode("utf-8")) < 32
+            ):
+                invalid.add(field_name)
+
+        required_text = {
+            "DIRECTMAIL_ACCOUNT_NAME": self.directmail_account_name,
+            "CAPTCHA_SCENE_ID": self.captcha_scene_id,
+            "OSS_ENDPOINT": self.oss_endpoint,
+            "OSS_BUCKET": self.oss_bucket,
+            "DELETION_MANIFEST_RECIPIENT": (
+                self.deletion_manifest_recipient
+            ),
+            "PRIVACY_POLICY_VERSION": self.privacy_policy_version,
+        }
+        for field_name, value in required_text.items():
+            if not value:
+                invalid.add(field_name)
+
+        if (
+            not self.statute_database_path.exists()
+            or not self.statute_database_path.is_file()
+        ):
+            invalid.add("STATUTES_DB_PATH")
+
+        private_paths = {
+            "ATTACHMENT_TEMP_DIR": self.attachment_temp_path,
+            "LOG_DIR": self.logs_path,
+            "BACKUP_STAGING_DIR": self.backup_staging_path,
+        }
+        values = list(private_paths.values())
+        if len(set(values)) != len(values):
+            invalid.update(private_paths)
+        static_path = (PROJECT_ROOT / "app" / "web").resolve()
+        for field_name, path in private_paths.items():
+            if path == static_path or path.is_relative_to(static_path):
+                invalid.add(field_name)
+
+        if invalid:
+            fields = ", ".join(sorted(invalid))
+            raise ValueError(f"生产配置无效: {fields}")
+        return self
+
     @property
     def allowed_origins(self) -> list[str]:
         return [
@@ -174,6 +341,19 @@ class Settings(BaseSettings):
             for origin in self.cors_origins.split(",")
             if origin.strip()
         ]
+
+    @property
+    def database_dsn(self) -> str | None:
+        if self.database_url is None:
+            return None
+        return self.database_url.get_secret_value()
+
+    @property
+    def public_origin(self) -> str | None:
+        if self.public_base_url is None:
+            return None
+        parsed = urlparse(self.public_base_url)
+        return f"{parsed.scheme}://{parsed.netloc}"
 
     def absolute_path(self, value: Path) -> Path:
         if value.is_absolute():
@@ -203,6 +383,14 @@ class Settings(BaseSettings):
     @property
     def attachment_temp_path(self) -> Path:
         return self.absolute_path(self.attachment_temp_dir)
+
+    @property
+    def logs_path(self) -> Path:
+        return self.absolute_path(self.log_dir)
+
+    @property
+    def backup_staging_path(self) -> Path:
+        return self.absolute_path(self.backup_staging_dir)
 
 
 @lru_cache
