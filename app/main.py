@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
 from collections.abc import Awaitable, Callable
+import hashlib
+import hmac
+import logging
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -10,8 +13,12 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.agent.errors import (
+    CaseNoProgressError,
     CircuitTrippedError,
+    ConsultationConflictError,
     DataIntegrityError,
+    InvalidProviderError,
+    NewWorkPausedError,
     ProviderError,
     RateLimitError,
     RequestInputError,
@@ -24,28 +31,34 @@ from app.attachments.errors import (
     AttachmentServiceUnavailableError,
 )
 from app.attachments.extractors import RapidOcrEngine
+from app.api.admin import router as admin_router
 from app.api.attachments import router as attachments_router
+from app.api.auth import router as auth_router
 from app.api.consult import router as consult_router
 from app.api.health import router as health_router
+from app.api.privacy import router as privacy_router
+from app.api.providers import router as providers_router
+from app.api.runtime import router as runtime_router
 from app.api.sessions import router as sessions_router
+from app.api.trial import router as trial_router
+from app.auth.errors import AuthError
+from app.auth.dependencies import initialize_auth_dependencies
 from app.config import Settings, get_settings
-from app.deps import initialize_attachment_dependencies
+from app.deletion.service import DeletionUnavailableError
+from app.deps import (
+    initialize_attachment_dependencies,
+    initialize_trial_dependencies,
+)
+from app.limits.quota import QuotaExceededError
+from app.observability.logging import configure_safe_json_logging
+from app.observability.metrics import OperationalMetrics
+from app.observability.request_context import RequestContextMiddleware
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
+CAPTCHA_SCRIPT_ORIGIN = "https://o.alicdn.com"
+CAPTCHA_SDK_HOST_SUFFIX = ".captcha-sdk.aliyuncs.com"
 SECURITY_HEADERS = {
-    "Content-Security-Policy": (
-        "default-src 'self'; "
-        "base-uri 'none'; "
-        "object-src 'none'; "
-        "frame-ancestors 'none'; "
-        "form-action 'self'; "
-        "script-src 'self'; "
-        "style-src 'self'; "
-        "img-src 'self' data:; "
-        "connect-src 'self'; "
-        "font-src 'self'"
-    ),
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -53,6 +66,47 @@ SECURITY_HEADERS = {
         "camera=(), microphone=(), geolocation=(), payment=()"
     ),
 }
+
+
+def _content_security_policy(settings: Settings) -> str:
+    script_sources = ["'self'"]
+    connect_sources = ["'self'"]
+    directives = [
+        "default-src 'self'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+    ]
+    captcha_enabled = (
+        settings.deployment_mode == "production"
+        and settings.captcha_enabled
+    )
+    if captcha_enabled:
+        captcha_origin = (
+            f"https://{settings.captcha_prefix}{CAPTCHA_SDK_HOST_SUFFIX}"
+        )
+        script_sources.append(CAPTCHA_SCRIPT_ORIGIN)
+        connect_sources.append(captcha_origin)
+    directives.extend(
+        [
+            f"script-src {' '.join(script_sources)}",
+            "style-src 'self'",
+            "img-src 'self' data:",
+            f"connect-src {' '.join(connect_sources)}",
+            "font-src 'self'",
+        ]
+    )
+    if captcha_enabled:
+        directives.append(f"frame-src {captcha_origin}")
+    return "; ".join(directives)
+
+
+def _security_headers(settings: Settings) -> dict[str, str]:
+    return {
+        **SECURITY_HEADERS,
+        "Content-Security-Policy": _content_security_policy(settings),
+    }
 
 
 def probe_ocr_readiness() -> bool:
@@ -65,17 +119,28 @@ def probe_ocr_readiness() -> bool:
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
-    store, service = initialize_attachment_dependencies(application)
-    recovery_ready = True
+    settings: Settings = application.state.settings
+    if settings.deployment_mode == "production":
+        configure_safe_json_logging(settings.logs_path)
+    initialize_auth_dependencies(application)
+    _, quota = initialize_trial_dependencies(application)
+    quota.recover_stale(limit=100)
     try:
-        service.recover(limit=100)
-    except AttachmentServiceUnavailableError:
-        recovery_ready = False
-    store.purge_expired(limit=100)
-    application.state.ocr_ready = (
-        probe_ocr_readiness() if recovery_ready else False
-    )
-    yield
+        _, service = initialize_attachment_dependencies(application)
+        recovery_ready = True
+        try:
+            service.recover(limit=100)
+            service.purge_expired(limit=100)
+        except AttachmentServiceUnavailableError:
+            recovery_ready = False
+        application.state.ocr_ready = (
+            probe_ocr_readiness() if recovery_ready else False
+        )
+        yield
+    finally:
+        engine = getattr(application.state, "database_engine", None)
+        if engine is not None:
+            engine.dispose()
 
 
 def create_app(
@@ -93,10 +158,16 @@ def create_app(
     application.add_middleware(
         CORSMiddleware,
         allow_origins=active_settings.allowed_origins,
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", "X-CSRF-Token"],
     )
+    application.add_middleware(
+        RequestContextMiddleware,
+        identity_secret=_request_log_identity_secret(active_settings),
+        logger=logging.getLogger("weiquan.request"),
+    )
+    security_headers = _security_headers(active_settings)
 
     @application.middleware("http")
     async def add_security_headers(
@@ -104,11 +175,16 @@ def create_app(
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         response = await call_next(request)
-        response.headers.update(SECURITY_HEADERS)
+        response.headers.update(security_headers)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = (
+                "no-cache, max-age=0, must-revalidate"
+            )
         return response
 
     application.state.settings = active_settings
     application.state.ocr_ready = False
+    application.state.operational_metrics = OperationalMetrics()
     if pipeline is not None:
         application.state.consultation_pipeline = pipeline
         pipeline_store = getattr(pipeline, "store", None)
@@ -123,9 +199,15 @@ def create_app(
         _safe_error_handler,
     )
     application.include_router(health_router)
+    application.include_router(runtime_router)
+    application.include_router(auth_router)
+    application.include_router(privacy_router)
+    application.include_router(trial_router)
     application.include_router(attachments_router)
     application.include_router(consult_router)
+    application.include_router(providers_router)
     application.include_router(sessions_router)
+    application.include_router(admin_router)
     application.mount(
         "/static",
         StaticFiles(directory=WEB_ROOT),
@@ -156,15 +238,31 @@ async def _safe_error_handler(
     exc: SafeApplicationError,
 ) -> JSONResponse:
     del request
-    if isinstance(exc, AttachmentError):
+    if isinstance(exc, AuthError):
         status_code = exc.status_code
-    elif isinstance(exc, (RequestInputError, SessionNotFoundError)):
+    elif isinstance(exc, AttachmentError):
+        status_code = exc.status_code
+    elif isinstance(
+        exc,
+        (InvalidProviderError, RequestInputError, SessionNotFoundError),
+    ):
         status_code = 422
-    elif isinstance(exc, RateLimitError):
+    elif isinstance(exc, (RateLimitError, QuotaExceededError)):
         status_code = 429
     elif isinstance(
         exc,
-        (ProviderError, CircuitTrippedError, StorageUnavailableError),
+        (CaseNoProgressError, ConsultationConflictError),
+    ):
+        status_code = 409
+    elif isinstance(
+        exc,
+        (
+            ProviderError,
+            CircuitTrippedError,
+            StorageUnavailableError,
+            NewWorkPausedError,
+            DeletionUnavailableError,
+        ),
     ):
         status_code = 503
     elif isinstance(exc, DataIntegrityError):
@@ -192,6 +290,19 @@ def _error_response(
             }
         },
     )
+
+
+def _request_log_identity_secret(settings: Settings) -> bytes:
+    getter = getattr(settings.ip_hmac_secret, "get_secret_value", None)
+    if getter is None:
+        seed = b"weiquan-local-request-log-seed-v1"
+    else:
+        seed = str(getter()).encode("utf-8")
+    return hmac.new(
+        seed,
+        b"weiquan-request-log-identity-v1",
+        hashlib.sha256,
+    ).digest()
 
 
 app = create_app()

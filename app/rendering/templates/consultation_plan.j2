@@ -32,8 +32,29 @@
 {{ action.order }}. {{ action.text }}
 {% endfor %}
 
-【沟通建议】
-{{ plan.communication_text }}
+【沟通指南】
+收件对象：{{ plan.communication_guide.recipient }}
+建议渠道：{{ plan.communication_guide.channels | join("；") }}
+发送时机：{{ plan.communication_guide.when_to_send }}
+沟通目标：{{ plan.communication_guide.objective }}
+{% if plan.communication_guide.required_before_send %}
+【发送前需补充】
+{% for item in plan.communication_guide.required_before_send %}
+{{ loop.index }}. {{ item }}
+{% endfor %}
+{% endif %}
+【可直接发送】
+{{ plan.communication_guide.message }}
+
+【发送后动作】
+{% for item in plan.communication_guide.after_sending %}
+{{ loop.index }}. {{ item }}
+{% endfor %}
+
+【升级动作】
+{% for item in plan.communication_guide.escalation %}
+{{ loop.index }}. {{ item }}
+{% endfor %}
 
 【适用辖区】
 {% if plan.jurisdiction.code %}{{ plan.jurisdiction.name }}（{{ plan.jurisdiction.code }}）{% else %}未登记辖区{% endif %}

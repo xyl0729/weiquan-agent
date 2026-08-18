@@ -322,3 +322,143 @@ cases:
     query: 我认为法院错误适用小额诉讼程序，可以提出异议吗
     expected_refs:
       - 民事诉讼法.第一百六十九条
+
+  - id: property-neighbor-01
+    query: 业主制造噪声侵占通道损害他人权益，可以要求停止侵害吗
+    expected_refs:
+      - 民法典.第二百八十六条
+
+  - id: property-neighbor-02
+    query: 不动产相邻权利人应当公平合理正确处理相邻关系
+    expected_refs:
+      - 民法典.第二百八十八条
+
+  - id: debt-01
+    query: 借款人向贷款人借款，到期返还借款属于什么合同
+    expected_refs:
+      - 民法典.第六百六十七条
+
+  - id: debt-02
+    query: 借款期限没有约定，贷款人能否催告在合理期限内返还
+    expected_refs:
+      - 民法典.第六百七十五条
+
+  - id: debt-03
+    query: 自然人借款没有约定利息，能否事后要求支付利息
+    expected_refs:
+      - 民法典.第六百八十条
+
+  - id: property-service-01
+    query: 物业服务人是否应当维修养护共有部分并维护基本秩序
+    expected_refs:
+      - 民法典.第九百四十二条
+
+  - id: personality-01
+    query: 人格权受侵害能否请求停止侵害消除影响恢复名誉赔礼道歉
+    expected_refs:
+      - 民法典.第九百九十五条
+
+  - id: harassment-01
+    query: 单位是否应预防受理投诉调查处置利用从属关系实施的性骚扰
+    expected_refs:
+      - 民法典.第一千零一十条
+
+  - id: reputation-01
+    query: 他人用侮辱诽谤方式侵害我的名誉权
+    expected_refs:
+      - 民法典.第一千零二十四条
+
+  - id: privacy-01
+    query: 他人刺探侵扰泄露公开我的私密信息和私人生活安宁
+    expected_refs:
+      - 民法典.第一千零三十二条
+
+  - id: privacy-02
+    query: 姓名身份证号码住址电话号码电子邮箱是否属于个人信息
+    expected_refs:
+      - 民法典.第一千零三十四条
+
+  - id: privacy-03
+    query: 处理个人信息应当遵循合法正当必要原则并明示目的方式范围
+    expected_refs:
+      - 民法典.第一千零三十五条
+
+  - id: family-01
+    query: 婚姻关系存续期间的工资奖金投资收益是否属于夫妻共同财产
+    expected_refs:
+      - 民法典.第一千零六十二条
+
+  - id: family-02
+    query: 父母不付抚养费或者成年子女不履行赡养义务怎么办
+    expected_refs:
+      - 民法典.第一千零六十七条
+
+  - id: family-03
+    query: 离婚后不直接抚养孩子的一方是否有探望子女的权利
+    expected_refs:
+      - 民法典.第一千零八十六条
+
+  - id: injury-01
+    query: 行为人因过错侵害他人民事权益造成损害应承担什么责任
+    expected_refs:
+      - 民法典.第一千一百六十五条
+
+  - id: injury-02
+    query: 人身损害的医疗费护理费交通费营养费和误工收入怎么赔
+    expected_refs:
+      - 民法典.第一千一百七十九条
+
+  - id: injury-03
+    query: 在商场等公共场所受伤，经营者未尽安全保障义务
+    expected_refs:
+      - 民法典.第一千一百九十八条
+
+  - id: education-01
+    query: 无民事行为能力人在幼儿园学习生活期间受到人身损害
+    expected_refs:
+      - 民法典.第一千一百九十九条
+
+  - id: education-02
+    query: 限制民事行为能力人在学校受伤，学校未尽教育管理职责
+    expected_refs:
+      - 民法典.第一千二百条
+
+  - id: education-03
+    query: 学生在学校受到校外第三人伤害，学校未尽管理职责承担补充责任
+    expected_refs:
+      - 民法典.第一千二百零一条
+
+  - id: traffic-01
+    query: 机动车发生交通事故造成损害应依照道路交通安全法律承担赔偿责任
+    expected_refs:
+      - 民法典.第一千二百零八条
+
+  - id: medical-01
+    query: 患者在诊疗活动中受到损害，医疗机构医务人员存在过错
+    expected_refs:
+      - 民法典.第一千二百一十八条
+
+  - id: medical-02
+    query: 手术前应说明医疗风险替代医疗方案并取得患者明确同意
+    expected_refs:
+      - 民法典.第一千二百一十九条
+
+  - id: medical-03
+    query: 医院隐匿拒绝提供病历或者伪造篡改销毁病历能否推定过错
+    expected_refs:
+      - 民法典.第一千二百二十二条
+
+  - id: medical-04
+    query: 患者要求查阅复制住院志医嘱单检验报告等病历资料
+    expected_refs:
+      - 民法典.第一千二百二十五条
+
+  - id: medical-05
+    query: 医院泄露患者隐私个人信息或者未经同意公开病历资料
+    expected_refs:
+      - 民法典.第一千二百二十六条
+
+  - id: animal-01
+    query: 饲养的动物咬伤他人，动物饲养人或者管理人的责任
+    expected_refs:
+      - 民法典.第一千二百四十五条

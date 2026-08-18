@@ -89,8 +89,14 @@ class PlanRenderer:
                 evidence_template=evidence_template,
             )
 
+        polished_guide = draft.plan.communication_guide.model_copy(
+            update={"message": normalized}
+        )
         polished_plan = draft.plan.model_copy(
-            update={"communication_text": normalized}
+            update={
+                "communication_text": normalized,
+                "communication_guide": polished_guide,
+            }
         )
         polished_draft = draft.model_copy(update={"plan": polished_plan})
         return self.render(

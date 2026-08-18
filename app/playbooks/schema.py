@@ -201,6 +201,26 @@ class RuleDefinition(BaseModel):
     default: bool = False
     verdict: str = Field(pattern=_IDENTIFIER_PATTERN)
     key_point: str = Field(min_length=1, max_length=500)
+    legal_refs: list[str] | None = Field(default=None, min_length=1)
+
+    @field_validator("legal_refs")
+    @classmethod
+    def legal_refs_are_normalized(
+        cls,
+        values: list[str] | None,
+    ) -> list[str] | None:
+        if values is None:
+            return None
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("规则法条引用不能为空")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("规则法条引用不得重复")
+        for value in normalized:
+            law, separator, article = value.partition(".")
+            if not separator or not law or not article or "." in article:
+                raise ValueError("法条引用必须使用 法律简称.条号 格式")
+        return normalized
 
     @model_validator(mode="after")
     def validate_branch(self) -> "RuleDefinition":
@@ -321,6 +341,16 @@ class Playbook(BaseModel):
         refs = [item.ref for item in self.legal_basis]
         if len(refs) != len(set(refs)):
             raise ValueError("legal_basis 引用不得重复")
+        allowed_refs = set(refs)
+        for rule in self.rules:
+            if rule.legal_refs is None:
+                continue
+            unknown_refs = set(rule.legal_refs) - allowed_refs
+            if unknown_refs:
+                raise ValueError(
+                    "规则引用未在 legal_basis 声明的法条: "
+                    + ", ".join(sorted(unknown_refs))
+                )
         if self.time_limit is not None:
             if self.time_limit.start_slot not in slot_by_name:
                 raise ValueError("时效起算槽位未声明")
@@ -341,6 +371,16 @@ class Playbook(BaseModel):
     @property
     def slot_names(self) -> list[str]:
         return [slot.name for slot in self.slots.all]
+
+    def legal_refs_for_rule(self, rule_id: str) -> list[str]:
+        for rule in self.rules:
+            if rule.id == rule_id:
+                return (
+                    list(rule.legal_refs)
+                    if rule.legal_refs is not None
+                    else [basis.ref for basis in self.legal_basis]
+                )
+        raise KeyError(f"未知规则: {rule_id}")
 
 
 class SlotValidationResult(BaseModel):

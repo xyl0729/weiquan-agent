@@ -3,6 +3,26 @@ warning: 法条数据已由用户依据 docs/legal-data-verification-checklist.m
 statutes:
 - law_name: 中华人民共和国民法典
   law_short: 民法典
+  article_no: 第二百八十六条
+  article_num: 286
+  content: |-
+    第二百八十六条　业主应当遵守法律、法规以及管理规约，相关行为应当符合节约资源、保护生态环境的要求。对于物业服务企业或者其他管理人执行政府依法实施的应急处置措施和其他管理措施，业主应当依法予以配合。
+    业主大会或者业主委员会，对任意弃置垃圾、排放污染物或者噪声、违反规定饲养动物、违章搭建、侵占通道、拒付物业费等损害他人合法权益的行为，有权依照法律、法规以及管理规约，请求行为人停止侵害、排除妨碍、消除危险、恢复原状、赔偿损失。
+    业主或者其他行为人拒不履行相关义务的，有关当事人可以向有关行政主管部门报告或者投诉，有关行政主管部门应当依法处理。
+  chapter: 第六章　业主的建筑物区分所有权
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第二百八十八条
+  article_num: 288
+  content: |-
+    第二百八十八条　不动产的相邻权利人应当按照有利生产、方便生活、团结互助、公平合理的原则，正确处理相邻关系。
+  chapter: 第七章　相邻关系
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
   article_no: 第四百九十六条
   article_num: 496
   content: |-
@@ -101,6 +121,35 @@ statutes:
   source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
 - law_name: 中华人民共和国民法典
   law_short: 民法典
+  article_no: 第六百六十七条
+  article_num: 667
+  content: |-
+    第六百六十七条　借款合同是借款人向贷款人借款，到期返还借款并支付利息的合同。
+  chapter: 第十二章　借款合同
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第六百七十五条
+  article_num: 675
+  content: |-
+    第六百七十五条　借款人应当按照约定的期限返还借款。对借款期限没有约定或者约定不明确，依据本法第五百一十条的规定仍不能确定的，借款人可以随时返还；贷款人可以催告借款人在合理期限内返还。
+  chapter: 第十二章　借款合同
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第六百八十条
+  article_num: 680
+  content: |-
+    第六百八十条　禁止高利放贷，借款的利率不得违反国家有关规定。
+    借款合同对支付利息没有约定的，视为没有利息。
+    借款合同对支付利息约定不明确，当事人不能达成补充协议的，按照当地或者当事人的交易方式、交易习惯、市场利率等因素确定利息；自然人之间借款的，视为没有利息。
+  chapter: 第十二章　借款合同
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
   article_no: 第七百一十条
   article_num: 710
   content: |-
@@ -173,6 +222,240 @@ statutes:
   chapter: 第十七章　承揽合同
   effective_date: '2021-01-01'
   source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第九百四十二条
+  article_num: 942
+  content: |-
+    第九百四十二条　物业服务人应当按照约定和物业的使用性质，妥善维修、养护、清洁、绿化和经营管理物业服务区域内的业主共有部分，维护物业服务区域内的基本秩序，采取合理措施保护业主的人身、财产安全。
+    对物业服务区域内违反有关治安、环保、消防等法律法规的行为，物业服务人应当及时采取合理措施制止、向有关行政主管部门报告并协助处理。
+  chapter: 第二十四章　物业服务合同
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第九百九十五条
+  article_num: 995
+  content: |-
+    第九百九十五条　人格权受到侵害的，受害人有权依照本法和其他法律的规定请求行为人承担民事责任。受害人的停止侵害、排除妨碍、消除危险、消除影响、恢复名誉、赔礼道歉请求权，不适用诉讼时效的规定。
+  chapter: 第一章　一般规定
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千零一十条
+  article_num: 1010
+  content: |-
+    第一千零一十条　违背他人意愿，以言语、文字、图像、肢体行为等方式对他人实施性骚扰的，受害人有权依法请求行为人承担民事责任。
+    机关、企业、学校等单位应当采取合理的预防、受理投诉、调查处置等措施，防止和制止利用职权、从属关系等实施性骚扰。
+  chapter: 第二章　生命权、身体权和健康权
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千零二十四条
+  article_num: 1024
+  content: |-
+    第一千零二十四条　民事主体享有名誉权。任何组织或者个人不得以侮辱、诽谤等方式侵害他人的名誉权。
+    名誉是对民事主体的品德、声望、才能、信用等的社会评价。
+  chapter: 第五章　名誉权和荣誉权
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千零三十二条
+  article_num: 1032
+  content: |-
+    第一千零三十二条　自然人享有隐私权。任何组织或者个人不得以刺探、侵扰、泄露、公开等方式侵害他人的隐私权。
+    隐私是自然人的私人生活安宁和不愿为他人知晓的私密空间、私密活动、私密信息。
+  chapter: 第六章　隐私权和个人信息保护
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千零三十四条
+  article_num: 1034
+  content: |-
+    第一千零三十四条　自然人的个人信息受法律保护。
+    个人信息是以电子或者其他方式记录的能够单独或者与其他信息结合识别特定自然人的各种信息，包括自然人的姓名、出生日期、身份证件号码、生物识别信息、住址、电话号码、电子邮箱、健康信息、行踪信息等。
+    个人信息中的私密信息，适用有关隐私权的规定；没有规定的，适用有关个人信息保护的规定。
+  chapter: 第六章　隐私权和个人信息保护
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千零三十五条
+  article_num: 1035
+  content: |-
+    第一千零三十五条　处理个人信息的，应当遵循合法、正当、必要原则，不得过度处理，并符合下列条件：
+    （一）征得该自然人或者其监护人同意，但是法律、行政法规另有规定的除外；
+    （二）公开处理信息的规则；
+    （三）明示处理信息的目的、方式和范围；
+    （四）不违反法律、行政法规的规定和双方的约定。
+    个人信息的处理包括个人信息的收集、存储、使用、加工、传输、提供、公开等。
+  chapter: 第六章　隐私权和个人信息保护
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千零六十二条
+  article_num: 1062
+  content: |-
+    第一千零六十二条　夫妻在婚姻关系存续期间所得的下列财产，为夫妻的共同财产，归夫妻共同所有：
+    （一）工资、奖金、劳务报酬；
+    （二）生产、经营、投资的收益；
+    （三）知识产权的收益；
+    （四）继承或者受赠的财产，但是本法第一千零六十三条第三项规定的除外；
+    （五）其他应当归共同所有的财产。
+    夫妻对共同财产，有平等的处理权。
+  chapter: 第三章　家庭关系 / 第一节　夫妻关系
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千零六十七条
+  article_num: 1067
+  content: |-
+    第一千零六十七条　父母不履行抚养义务的，未成年子女或者不能独立生活的成年子女，有要求父母给付抚养费的权利。
+    成年子女不履行赡养义务的，缺乏劳动能力或者生活困难的父母，有要求成年子女给付赡养费的权利。
+  chapter: 第三章　家庭关系 / 第二节　父母子女关系和其他近亲属关系
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千零八十六条
+  article_num: 1086
+  content: |-
+    第一千零八十六条　离婚后，不直接抚养子女的父或者母，有探望子女的权利，另一方有协助的义务。
+    行使探望权利的方式、时间由当事人协议；协议不成的，由人民法院判决。
+    父或者母探望子女，不利于子女身心健康的，由人民法院依法中止探望；中止的事由消失后，应当恢复探望。
+  chapter: 第四章　离婚
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千一百六十五条
+  article_num: 1165
+  content: |-
+    第一千一百六十五条　行为人因过错侵害他人民事权益造成损害的，应当承担侵权责任。
+    依照法律规定推定行为人有过错，其不能证明自己没有过错的，应当承担侵权责任。
+  chapter: 第一章　一般规定
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千一百七十九条
+  article_num: 1179
+  content: |-
+    第一千一百七十九条　侵害他人造成人身损害的，应当赔偿医疗费、护理费、交通费、营养费、住院伙食补助费等为治疗和康复支出的合理费用，以及因误工减少的收入。造成残疾的，还应当赔偿辅助器具费和残疾赔偿金；造成死亡的，还应当赔偿丧葬费和死亡赔偿金。
+  chapter: 第二章　损害赔偿
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千一百九十八条
+  article_num: 1198
+  content: |-
+    第一千一百九十八条　宾馆、商场、银行、车站、机场、体育场馆、娱乐场所等经营场所、公共场所的经营者、管理者或者群众性活动的组织者，未尽到安全保障义务，造成他人损害的，应当承担侵权责任。
+    因第三人的行为造成他人损害的，由第三人承担侵权责任；经营者、管理者或者组织者未尽到安全保障义务的，承担相应的补充责任。经营者、管理者或者组织者承担补充责任后，可以向第三人追偿。
+  chapter: 第三章　责任主体的特殊规定
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千一百九十九条
+  article_num: 1199
+  content: |-
+    第一千一百九十九条　无民事行为能力人在幼儿园、学校或者其他教育机构学习、生活期间受到人身损害的，幼儿园、学校或者其他教育机构应当承担侵权责任；但是，能够证明尽到教育、管理职责的，不承担侵权责任。
+  chapter: 第三章　责任主体的特殊规定
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百条
+  article_num: 1200
+  content: |-
+    第一千二百条　限制民事行为能力人在学校或者其他教育机构学习、生活期间受到人身损害，学校或者其他教育机构未尽到教育、管理职责的，应当承担侵权责任。
+  chapter: 第三章　责任主体的特殊规定
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百零一条
+  article_num: 1201
+  content: |-
+    第一千二百零一条　无民事行为能力人或者限制民事行为能力人在幼儿园、学校或者其他教育机构学习、生活期间，受到幼儿园、学校或者其他教育机构以外的第三人人身损害的，由第三人承担侵权责任；幼儿园、学校或者其他教育机构未尽到管理职责的，承担相应的补充责任。幼儿园、学校或者其他教育机构承担补充责任后，可以向第三人追偿。
+  chapter: 第三章　责任主体的特殊规定
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百零八条
+  article_num: 1208
+  content: |-
+    第一千二百零八条　机动车发生交通事故造成损害的，依照道路交通安全法律和本法的有关规定承担赔偿责任。
+  chapter: 第五章　机动车交通事故责任
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百一十八条
+  article_num: 1218
+  content: |-
+    第一千二百一十八条　患者在诊疗活动中受到损害，医疗机构或者其医务人员有过错的，由医疗机构承担赔偿责任。
+  chapter: 第六章　医疗损害责任
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百一十九条
+  article_num: 1219
+  content: |-
+    第一千二百一十九条　医务人员在诊疗活动中应当向患者说明病情和医疗措施。需要实施手术、特殊检查、特殊治疗的，医务人员应当及时向患者具体说明医疗风险、替代医疗方案等情况，并取得其明确同意；不能或者不宜向患者说明的，应当向患者的近亲属说明，并取得其明确同意。
+    医务人员未尽到前款义务，造成患者损害的，医疗机构应当承担赔偿责任。
+  chapter: 第六章　医疗损害责任
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百二十二条
+  article_num: 1222
+  content: |-
+    第一千二百二十二条　患者在诊疗活动中受到损害，有下列情形之一的，推定医疗机构有过错：
+    （一）违反法律、行政法规、规章以及其他有关诊疗规范的规定；
+    （二）隐匿或者拒绝提供与纠纷有关的病历资料；
+    （三）遗失、伪造、篡改或者违法销毁病历资料。
+  chapter: 第六章　医疗损害责任
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百二十五条
+  article_num: 1225
+  content: |-
+    第一千二百二十五条　医疗机构及其医务人员应当按照规定填写并妥善保管住院志、医嘱单、检验报告、手术及麻醉记录、病理资料、护理记录等病历资料。
+    患者要求查阅、复制前款规定的病历资料的，医疗机构应当及时提供。
+  chapter: 第六章　医疗损害责任
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百二十六条
+  article_num: 1226
+  content: |-
+    第一千二百二十六条　医疗机构及其医务人员应当对患者的隐私和个人信息保密。泄露患者的隐私和个人信息，或者未经患者同意公开其病历资料的，应当承担侵权责任。
+  chapter: 第六章　医疗损害责任
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+- law_name: 中华人民共和国民法典
+  law_short: 民法典
+  article_no: 第一千二百四十五条
+  article_num: 1245
+  content: |-
+    第一千二百四十五条　饲养的动物造成他人损害的，动物饲养人或者管理人应当承担侵权责任；但是，能够证明损害是因被侵权人故意或者重大过失造成的，可以不承担或者减轻责任。
+  chapter: 第九章　饲养动物损害责任
+  effective_date: '2021-01-01'
+  source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
 - law_name: 住房租赁条例
   law_short: 住房租赁条例
   article_no: 第十条
@@ -205,6 +488,16 @@ statutes:
   chapter: 第五章　监督管理
   effective_date: '2025-09-15'
   source_url: https://flk.npc.gov.cn/detail?id=ff808181983198da01983f9ff1be5b2c
+- law_name: 中华人民共和国食品安全法
+  law_short: 食品安全法
+  article_no: 第一百四十八条
+  article_num: 148
+  content: |-
+    第一百四十八条　消费者因不符合食品安全标准的食品受到损害的，可以向经营者要求赔偿损失，也可以向生产者要求赔偿损失。接到消费者赔偿要求的生产经营者，应当实行首负责任制，先行赔付，不得推诿；属于生产者责任的，经营者赔偿后有权向生产者追偿；属于经营者责任的，生产者赔偿后有权向经营者追偿。
+    生产不符合食品安全标准的食品或者经营明知是不符合食品安全标准的食品，消费者除要求赔偿损失外，还可以向生产者或者经营者要求支付价款十倍或者损失三倍的赔偿金；增加赔偿的金额不足一千元的，为一千元。但是，食品的标签、说明书存在不影响食品安全且不会对消费者造成误导的瑕疵的除外。
+  chapter: 第九章　法律责任
+  effective_date: '2025-12-01'
+  source_url: https://flk.npc.gov.cn/detail?id=7b5a76d0461745a08d3f964916b87ef3
 - law_name: 中华人民共和国消费者权益保护法
   law_short: 消费者权益保护法
   article_no: 第二十三条

@@ -5,13 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#ffffff">
-    <meta name="description" content="本地维权咨询工作台">
+    <meta
+      name="description"
+      content="面向中国大陆用户的维权咨询工作台"
+    >
     <title>维权咨询助手</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
-    <div class="app-shell" id="app" data-view="new" data-history-open="false">
+    <div
+      class="app-shell"
+      id="app"
+      data-view="new"
+      data-history-open="false"
+      data-identity="loading"
+    >
       <header class="app-header">
         <div class="brand">
           <button
@@ -22,6 +31,7 @@
             aria-controls="history-panel"
             aria-expanded="false"
             data-tooltip="咨询记录"
+            data-auth-only="true"
           >
             <svg class="icon" aria-hidden="true">
               <use href="/static/icons/lucide.svg#menu"></use>
@@ -33,9 +43,25 @@
 
         <div class="header-path" id="header-path">新咨询</div>
 
-        <div class="service-state" id="service-state" data-status="loading">
-          <span class="service-dot" aria-hidden="true"></span>
-          <span id="service-state-label">正在连接</span>
+        <div class="header-controls">
+          <span class="quota-summary" id="quota-summary">
+            正在读取额度
+          </span>
+          <div class="service-state" id="service-state" data-status="loading">
+            <span class="service-dot" aria-hidden="true"></span>
+            <span id="service-state-label">正在连接</span>
+          </div>
+          <button
+            class="account-button"
+            id="account-button"
+            type="button"
+            aria-haspopup="dialog"
+          >
+            <svg class="icon" aria-hidden="true">
+              <use href="/static/icons/lucide.svg#circle-user-round"></use>
+            </svg>
+            <span id="account-summary">登录 / 注册</span>
+          </button>
         </div>
       </header>
 
@@ -44,6 +70,7 @@
           class="history-panel"
           id="history-panel"
           aria-label="咨询记录"
+          data-auth-only="true"
         >
           <div class="history-panel-head">
             <button class="new-session-button" id="new-session" type="button">
@@ -91,9 +118,9 @@
 
           <div class="local-note">
             <svg class="icon" aria-hidden="true">
-              <use href="/static/icons/lucide.svg#hard-drive"></use>
+              <use href="/static/icons/lucide.svg#shield-check"></use>
             </svg>
-            <span>仅保存在本机</span>
+            <span>在线记录最多保留 30 天</span>
           </div>
         </aside>
 
@@ -117,6 +144,43 @@
                 </p>
               </header>
 
+              <div
+                class="trial-strip"
+                data-trial-only="true"
+                aria-label="匿名试用说明"
+              >
+                <div class="trial-strip-copy">
+                  <strong>无需注册即可试用</strong>
+                  <span>累计 5 次纯文字咨询，当前页面内可连续追问</span>
+                  <span class="trial-benefit">
+                    登录后可保存历史、上传材料并使用独立额度
+                  </span>
+                </div>
+                <div class="trial-strip-actions">
+                  <button
+                    class="trial-auth-button"
+                    id="trial-login"
+                    type="button"
+                  >
+                    登录
+                  </button>
+                  <button
+                    class="trial-auth-button trial-register-button"
+                    id="trial-register"
+                    type="button"
+                  >
+                    注册
+                  </button>
+                  <button
+                    class="policy-link"
+                    id="trial-policy-open"
+                    type="button"
+                  >
+                    隐私政策
+                  </button>
+                </div>
+              </div>
+
               <form class="composer new-composer" id="new-form" novalidate>
                 <label class="sr-only" for="new-message">
                   描述需要咨询的问题
@@ -125,20 +189,62 @@
                   id="new-message"
                   name="message"
                   rows="5"
-                  maxlength="4000"
+                  maxlength="3000"
                   placeholder="例如：商家发错货，但拒绝退款，我已经联系过平台客服……"
                 ></textarea>
+                <div
+                  class="attachment-list"
+                  id="new-attachment-list"
+                  aria-label="本轮材料"
+                  aria-live="polite"
+                  data-auth-only="true"
+                ></div>
+                <p
+                  class="attachment-blocker"
+                  id="new-attachment-blocker"
+                  role="status"
+                  data-auth-only="true"
+                  hidden
+                ></p>
                 <div class="composer-meta">
-                  <p class="input-error" id="new-message-error" aria-live="polite"></p>
+                  <p
+                    class="input-error"
+                    id="new-message-error"
+                    aria-live="polite"
+                  ></p>
                   <div class="composer-actions">
-                    <span class="privacy-note">
+                    <button
+                      class="privacy-note"
+                      id="privacy-policy-open"
+                      type="button"
+                    >
                       <svg class="icon" aria-hidden="true">
                         <use href="/static/icons/lucide.svg#shield-check"></use>
                       </svg>
-                      本机测试
-                    </span>
+                      隐私政策
+                    </button>
+                    <input
+                      id="new-attachment-input"
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                      multiple
+                      data-auth-only="true"
+                      hidden
+                    >
+                    <button
+                      class="icon-button composer-tool-button"
+                      id="new-attachment-trigger"
+                      type="button"
+                      aria-label="添加 PDF 或图片材料"
+                      data-tooltip="添加材料"
+                      data-auth-only="true"
+                    >
+                      <svg class="icon" aria-hidden="true">
+                        <use href="/static/icons/lucide.svg#paperclip"></use>
+                      </svg>
+                    </button>
                     <span class="character-count" id="new-character-count">
-                      0 / 4000
+                      0 / 3000
                     </span>
                     <button
                       class="send-button"
@@ -211,16 +317,30 @@
                 <span class="case-number" id="case-number">案件</span>
                 <h1 id="case-title">咨询记录</h1>
               </div>
-              <div class="case-stage" id="case-stage" data-status="need_more_facts">
-                <span class="case-stage-mark" aria-hidden="true"></span>
-                <span id="case-stage-label">正在整理</span>
+              <div class="case-header-actions">
+                <button
+                  class="text-button trial-again"
+                  id="trial-again"
+                  type="button"
+                  data-trial-only="true"
+                >
+                  开始新咨询
+                </button>
+                <div class="case-stage" id="case-stage" data-status="need_more_facts">
+                  <span class="case-stage-mark" aria-hidden="true"></span>
+                  <span id="case-stage-label">正在整理</span>
+                </div>
               </div>
             </header>
 
             <div class="case-alert" id="case-alert" role="status" hidden></div>
             <div class="thread" id="thread" aria-live="polite"></div>
 
-            <form class="composer case-composer" id="case-form" novalidate>
+            <form
+              class="composer case-composer"
+              id="case-form"
+              novalidate
+            >
               <label class="sr-only" for="case-message">继续补充情况</label>
               <textarea
                 id="case-message"
@@ -229,9 +349,47 @@
                 maxlength="4000"
                 placeholder="继续补充情况"
               ></textarea>
+              <div
+                class="attachment-list"
+                id="case-attachment-list"
+                aria-label="本轮材料"
+                aria-live="polite"
+                data-auth-only="true"
+              ></div>
+              <p
+                class="attachment-blocker"
+                id="case-attachment-blocker"
+                role="status"
+                data-auth-only="true"
+                hidden
+              ></p>
               <div class="composer-meta">
-                <p class="input-error" id="case-message-error" aria-live="polite"></p>
+                <p
+                  class="input-error"
+                  id="case-message-error"
+                  aria-live="polite"
+                ></p>
                 <div class="composer-actions">
+                  <input
+                    id="case-attachment-input"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                    multiple
+                    data-auth-only="true"
+                    hidden
+                  >
+                  <button
+                    class="icon-button composer-tool-button"
+                    id="case-attachment-trigger"
+                    type="button"
+                    aria-label="添加 PDF 或图片材料"
+                    data-tooltip="添加材料"
+                    data-auth-only="true"
+                  >
+                    <svg class="icon" aria-hidden="true">
+                      <use href="/static/icons/lucide.svg#paperclip"></use>
+                    </svg>
+                  </button>
                   <span class="character-count" id="case-character-count">
                     0 / 4000
                   </span>
@@ -261,7 +419,7 @@
         >
           <header class="summary-heading">
             <div>
-              <span class="section-kicker">CASE FILE</span>
+              <span class="section-kicker">案件资料</span>
               <h2 id="case-summary-title">案件摘要</h2>
             </div>
             <span class="summary-state" id="summary-state">整理中</span>
@@ -288,7 +446,7 @@
             <span class="section-kicker">删除记录</span>
             <h2>确认删除这条咨询？</h2>
             <p id="delete-dialog-description">
-              删除后，相关对话和案件摘要将从本机移除。
+              删除后，相关对话和案件摘要将从在线记录中移除。
             </p>
           </div>
           <div class="dialog-actions">
@@ -299,8 +457,367 @@
           </div>
         </form>
       </dialog>
+
+      <dialog
+        class="attachment-review-dialog"
+        id="attachment-review-dialog"
+        aria-labelledby="attachment-review-title"
+        aria-describedby="attachment-review-description"
+      >
+        <form id="attachment-review-form" novalidate>
+          <header class="review-dialog-header">
+            <div class="review-dialog-copy">
+              <span class="section-kicker">材料核对</span>
+              <h2 id="attachment-review-title">核对提取文字</h2>
+              <p id="attachment-review-description"></p>
+            </div>
+            <button
+              class="icon-button"
+              id="attachment-review-close"
+              type="button"
+              aria-label="关闭材料核对"
+              data-tooltip="关闭"
+            >
+              <svg class="icon" aria-hidden="true">
+                <use href="/static/icons/lucide.svg#x"></use>
+              </svg>
+            </button>
+          </header>
+          <div
+            class="attachment-review-pages"
+            id="attachment-review-pages"
+          ></div>
+          <p
+            class="review-dialog-error"
+            id="attachment-review-error"
+            role="alert"
+          ></p>
+          <footer class="review-dialog-footer">
+            <span
+              class="review-character-count"
+              id="attachment-review-count"
+            >
+              本轮确认文字 0 / 12000
+            </span>
+            <div class="dialog-actions">
+              <button
+                class="text-button"
+                id="attachment-review-cancel"
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                class="primary-button"
+                id="attachment-review-confirm"
+                type="submit"
+              >
+                <span class="button-spinner" aria-hidden="true"></span>
+                <span>确认用于本案</span>
+              </button>
+            </div>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog
+        class="auth-dialog"
+        id="auth-dialog"
+        aria-labelledby="auth-title"
+        aria-describedby="auth-description"
+      >
+        <div class="dialog-header auth-dialog-header">
+          <div>
+            <span class="section-kicker">账号</span>
+            <h2 id="auth-title">登录账号</h2>
+            <p id="auth-description">
+              登录后可查看历史、上传材料并使用注册额度。
+            </p>
+          </div>
+          <button
+            class="icon-button"
+            id="auth-close"
+            type="button"
+            aria-label="关闭账号窗口"
+            data-tooltip="关闭"
+          >
+            <svg class="icon" aria-hidden="true">
+              <use href="/static/icons/lucide.svg#x"></use>
+            </svg>
+          </button>
+        </div>
+
+        <div class="auth-tabs" id="auth-tabs" role="tablist">
+          <button
+            id="auth-login-tab"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            data-active="true"
+          >
+            登录
+          </button>
+          <button
+            id="auth-register-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            data-active="false"
+          >
+            注册
+          </button>
+        </div>
+
+        <form class="auth-form" id="auth-form" novalidate>
+          <div class="form-field" id="auth-email-field">
+            <label for="auth-email">邮箱</label>
+            <div class="field-control">
+              <svg class="icon field-control-icon" aria-hidden="true">
+                <use href="/static/icons/lucide.svg#mail"></use>
+              </svg>
+              <input
+                id="auth-email"
+                name="email"
+                type="email"
+                inputmode="email"
+                autocomplete="email"
+                maxlength="254"
+                placeholder="请输入邮箱地址"
+                required
+              >
+            </div>
+          </div>
+          <div
+            class="form-field"
+            id="auth-password-field"
+          >
+            <label id="auth-password-label" for="auth-password">密码</label>
+            <div class="field-control field-control-password">
+              <svg class="icon field-control-icon" aria-hidden="true">
+                <use href="/static/icons/lucide.svg#lock"></use>
+              </svg>
+              <input
+                id="auth-password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                minlength="8"
+                maxlength="128"
+                placeholder="请输入密码"
+                required
+              >
+              <button
+                class="password-toggle"
+                id="auth-password-toggle"
+                type="button"
+                aria-label="显示密码"
+                aria-pressed="false"
+                data-tooltip="显示密码"
+              >
+                <svg class="icon" aria-hidden="true">
+                  <use
+                    id="auth-password-visibility-icon"
+                    href="/static/icons/lucide.svg#eye"
+                  ></use>
+                </svg>
+              </button>
+            </div>
+            <small class="field-hint" id="auth-password-hint" hidden>
+              至少 8 个字符
+            </small>
+          </div>
+
+          <div
+            class="form-field"
+            id="auth-code-field"
+            hidden
+          >
+            <label for="auth-code">邮箱验证码</label>
+            <div class="field-control">
+              <svg class="icon field-control-icon" aria-hidden="true">
+                <use href="/static/icons/lucide.svg#shield-check"></use>
+              </svg>
+              <input
+                class="verification-code-input"
+                id="auth-code"
+                name="verification-code"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                minlength="6"
+                maxlength="6"
+                pattern="[0-9]{6}"
+                placeholder="请输入 6 位验证码"
+              >
+            </div>
+            <small class="field-hint">验证码 10 分钟内有效</small>
+          </div>
+
+          <div class="privacy-check" id="auth-privacy-field" hidden>
+            <label>
+              <input id="auth-privacy-accept" type="checkbox">
+              <span>我已阅读并接受</span>
+            </label>
+            <button
+              class="policy-link"
+              id="auth-privacy-open"
+              type="button"
+            >
+              隐私政策
+            </button>
+            <small id="auth-privacy-version">当前版本</small>
+          </div>
+
+          <div class="captcha-slot" id="captcha-slot" hidden>
+            <button
+              class="captcha-button"
+              id="auth-captcha-button"
+              type="button"
+            >
+              开始人机验证
+            </button>
+            <span id="auth-captcha-status" role="status">
+              正在初始化人机验证
+            </span>
+          </div>
+
+          <p class="form-error" id="auth-error" role="alert"></p>
+
+          <div class="auth-secondary-actions">
+            <button
+              class="text-link"
+              id="auth-forgot"
+              type="button"
+            >
+              忘记密码
+            </button>
+            <button
+              class="text-link"
+              id="auth-resend"
+              type="button"
+              hidden
+            >
+              重新发送验证码
+            </button>
+            <button
+              class="text-link"
+              id="auth-back"
+              type="button"
+              hidden
+            >
+              返回登录
+            </button>
+          </div>
+
+          <div class="dialog-actions auth-dialog-actions">
+            <button
+              class="danger-button"
+              id="auth-logout"
+              type="button"
+              hidden
+            >
+              退出登录
+            </button>
+            <button
+              class="primary-button"
+              id="auth-submit"
+              type="submit"
+            >
+              登录
+            </button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog
+        class="privacy-dialog"
+        id="privacy-dialog"
+        aria-labelledby="privacy-title"
+        aria-describedby="privacy-description"
+      >
+        <form id="privacy-form" novalidate>
+          <header class="dialog-header">
+            <div>
+              <span class="section-kicker" id="privacy-version">
+                当前版本
+              </span>
+              <h2 id="privacy-title">隐私政策</h2>
+              <p id="privacy-description">请查看当前生效版本。</p>
+            </div>
+            <button
+              class="icon-button"
+              id="privacy-close"
+              type="button"
+              aria-label="关闭隐私政策"
+              data-tooltip="关闭"
+            >
+              <svg class="icon" aria-hidden="true">
+                <use href="/static/icons/lucide.svg#x"></use>
+              </svg>
+            </button>
+          </header>
+
+          <div
+            class="privacy-text"
+            id="privacy-text"
+            tabindex="0"
+          ></div>
+
+          <label
+            class="privacy-acceptance"
+            id="privacy-acceptance"
+            hidden
+          >
+            <input id="privacy-accept" type="checkbox">
+            <span>我已阅读并接受当前版本的隐私政策</span>
+          </label>
+
+          <section
+            class="trial-captcha-section"
+            id="trial-captcha-section"
+            hidden
+          >
+            <div class="captcha-slot" id="trial-captcha-slot">
+              <button
+                class="captcha-button"
+                id="trial-captcha-button"
+                type="button"
+              >
+                开始人机验证
+              </button>
+              <span id="trial-captcha-status" role="status">
+                正在初始化人机验证
+              </span>
+            </div>
+          </section>
+
+          <p class="form-error" id="privacy-error" role="alert"></p>
+
+          <footer class="privacy-dialog-footer">
+            <button
+              class="text-button"
+              id="privacy-cancel"
+              type="button"
+            >
+              关闭
+            </button>
+            <button
+              class="primary-button"
+              id="privacy-submit"
+              type="submit"
+              hidden
+            >
+              <span class="button-spinner" aria-hidden="true"></span>
+              <span>确认并继续</span>
+            </button>
+          </footer>
+        </form>
+      </dialog>
     </div>
 
+    <script type="module" src="/static/js/auth.js"></script>
+    <script type="module" src="/static/js/captcha.js"></script>
+    <script type="module" src="/static/js/privacy.js"></script>
     <script type="module" src="/static/js/app.js"></script>
   </body>
 </html>

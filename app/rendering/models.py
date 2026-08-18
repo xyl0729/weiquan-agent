@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
+from app.agent.models import CommunicationGuide
 from app.jurisdiction.schema import (
     JurisdictionOutcome,
     JurisdictionResult,
@@ -13,6 +14,7 @@ from app.jurisdiction.schema import (
 )
 from app.playbooks.evaluator import EvaluationResult, RuleMatch
 from app.playbooks.schema import Playbook
+from app.rendering.communication import build_communication_guide
 from app.retrieval.database import StatuteRecord
 
 
@@ -25,9 +27,21 @@ class LegalCitation(BaseModel):
     content: str = Field(min_length=1)
     effective_date: date
     source_url: HttpUrl
+    basis_scope: Literal["case_specific", "general"] = "case_specific"
+    applicability_notice: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+    )
 
     @classmethod
-    def from_statute(cls, statute: StatuteRecord) -> "LegalCitation":
+    def from_statute(
+        cls,
+        statute: StatuteRecord,
+        *,
+        basis_scope: Literal["case_specific", "general"] = "case_specific",
+        applicability_notice: str | None = None,
+    ) -> "LegalCitation":
         if not isinstance(statute, StatuteRecord):
             raise TypeError("引用只能由 StatuteRecord 转换")
         return cls(
@@ -37,6 +51,8 @@ class LegalCitation(BaseModel):
             content=statute.content,
             effective_date=statute.effective_date,
             source_url=statute.source_url,
+            basis_scope=basis_scope,
+            applicability_notice=applicability_notice,
         )
 
 
@@ -76,6 +92,7 @@ class ConsultationPlan(BaseModel):
     citations: list[LegalCitation] = Field(min_length=1)
     actions: list[ActionStep] = Field(min_length=1)
     communication_text: str = Field(min_length=1, max_length=2000)
+    communication_guide: CommunicationGuide
     limitations: list[str] = Field(min_length=1)
     jurisdiction: JurisdictionResult
 
@@ -106,7 +123,7 @@ def build_consultation_draft(
     *,
     additional_limitations: Sequence[str] = (),
 ) -> LockedConsultationDraft:
-    citations = _citations(playbook, statutes)
+    citations = _citations(playbook, evaluation, statutes)
     verdict = VerdictView(
         code=evaluation.verdict,
         label=evaluation.verdict_label,
@@ -121,6 +138,7 @@ def build_consultation_draft(
             *additional_limitations,
         ]
     )
+    communication_guide = build_communication_guide(playbook, evaluation)
     plan = ConsultationPlan(
         scenario_id=playbook.id,
         scenario_name=playbook.name,
@@ -139,10 +157,8 @@ def build_consultation_draft(
             ActionStep(order=index, text=text)
             for index, text in enumerate(playbook.actions, start=1)
         ],
-        communication_text=(
-            "沟通时请逐项列明争议事实、金额和对应材料，"
-            "要求对方书面回复，并保留发送和送达记录。"
-        ),
+        communication_text=communication_guide.message,
+        communication_guide=communication_guide,
         limitations=limitations,
         jurisdiction=jurisdiction.jurisdiction,
     )
@@ -157,6 +173,7 @@ def build_consultation_draft(
 
 def _citations(
     playbook: Playbook,
+    evaluation: EvaluationResult,
     statutes: Sequence[StatuteRecord],
 ) -> list[LegalCitation]:
     by_ref: dict[str, StatuteRecord] = {}
@@ -165,7 +182,9 @@ def _citations(
             raise TypeError("引用只能由 StatuteRecord 转换")
         by_ref.setdefault(statute.ref, statute)
 
-    required_refs = [basis.ref for basis in playbook.legal_basis]
+    required_refs = playbook.legal_refs_for_rule(
+        evaluation.selected_rule_id
+    )
     missing = [ref for ref in required_refs if ref not in by_ref]
     if missing:
         raise ValueError("方案缺少强制法条引用: " + ", ".join(missing))

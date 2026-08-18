@@ -1,3 +1,4 @@
+from app.rendering.communication import build_communication_guide
 from app.rendering.models import (
     ActionStep,
     ConsultationPlan,
@@ -19,5 +20,6 @@ __all__ = [
     "PlanRenderer",
     "RenderedDocuments",
     "VerdictView",
+    "build_communication_guide",
     "build_consultation_draft",
 ]

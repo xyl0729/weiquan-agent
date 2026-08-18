@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -12,6 +14,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _is_test_staging_path(path: Path, project_root: Path) -> bool:
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    staging_root = project_root.parent
+    for parent in (path, *path.parents):
+        if (
+            parent.parent == staging_root
+            and parent.name.startswith("pytest-temp-production-")
+        ):
+            return True
+    return False
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
@@ -21,6 +36,10 @@ class Settings(BaseSettings):
     )
 
     deployment_mode: Literal["local", "test", "production"] = "local"
+    rollout_stage: Literal["internal", "invited", "public"] = "internal"
+    new_work_enabled: bool = True
+    public_launch_approved: bool = False
+    invited_user_limit: int = Field(default=10, ge=1, le=10)
     database_url: SecretStr | None = None
     public_base_url: str | None = None
     cookie_name: str = "weiquan_session"
@@ -28,13 +47,100 @@ class Settings(BaseSettings):
     session_secret: SecretStr | None = None
     ip_hmac_secret: SecretStr | None = None
     privacy_policy_version: str = "local-development"
+    registration_capacity_limit: int = Field(
+        default=100,
+        ge=1,
+        le=100,
+    )
+    auth_session_ttl_seconds: int = Field(
+        default=7 * 24 * 60 * 60,
+        ge=3600,
+        le=30 * 24 * 60 * 60,
+    )
+    auth_token_ttl_minutes: int = Field(
+        default=30,
+        ge=5,
+        le=60,
+    )
+    pending_registration_ttl_hours: int = Field(
+        default=24,
+        ge=1,
+        le=72,
+    )
+    auth_rate_limit_window_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86_400,
+    )
+    auth_register_rate_limit: int = Field(default=10, ge=1, le=100)
+    auth_resend_rate_limit: int = Field(default=5, ge=1, le=100)
+    auth_verify_rate_limit: int = Field(default=20, ge=1, le=200)
+    auth_login_rate_limit: int = Field(default=20, ge=1, le=200)
+    auth_forgot_rate_limit: int = Field(default=5, ge=1, le=100)
+    auth_reset_rate_limit: int = Field(default=10, ge=1, le=100)
+    session_retention_days: int = Field(default=30, ge=1, le=30)
+
+    trial_cookie_name: str = "weiquan_trial"
+    trial_cookie_ttl_seconds: int = Field(
+        default=365 * 24 * 60 * 60,
+        ge=24 * 60 * 60,
+        le=365 * 24 * 60 * 60,
+    )
+    trial_ip_grant_ttl_days: int = Field(default=30, ge=1, le=30)
+    trial_pending_ip_grant_ttl_minutes: int = Field(
+        default=15,
+        ge=5,
+        le=60,
+    )
+    trial_max_identities_per_ip: int = Field(default=3, ge=1, le=3)
+    trial_max_message_length: int = Field(default=3000, ge=100, le=3000)
+    trial_conversation_ttl_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86_400,
+    )
+    trial_conversation_capacity: int = Field(
+        default=256,
+        ge=1,
+        le=4096,
+    )
+    trial_conversation_max_turns: int = Field(
+        default=6,
+        ge=1,
+        le=20,
+    )
+    trial_total_quota: int = Field(default=5, ge=1, le=5)
+    trial_global_daily_quota: int = Field(default=50, ge=1, le=50)
+    registered_daily_quota: int = Field(default=10, ge=1, le=10)
+    registered_monthly_quota: int = Field(default=50, ge=1, le=50)
+    quota_reservation_stale_seconds: int = Field(
+        default=5 * 60,
+        ge=60,
+        le=30 * 60,
+    )
+    ocr_max_concurrency: int = Field(default=1, ge=1, le=1)
+    ocr_max_waiting: int = Field(default=2, ge=0, le=2)
+    deepseek_max_concurrency: int = Field(default=2, ge=1, le=2)
+    deepseek_max_waiting: int = Field(default=4, ge=0, le=4)
+    deepseek_queue_timeout_seconds: float = Field(
+        default=45,
+        gt=0,
+        le=45,
+    )
+    disk_max_used_percent: int = Field(default=80, ge=50, le=80)
+    disk_min_free_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        ge=16 * 1024 * 1024,
+    )
 
     aliyun_access_key_id: SecretStr | None = None
     aliyun_access_key_secret: SecretStr | None = None
     directmail_account_name: str = ""
     directmail_from_alias: str = "维权咨询助手"
     directmail_region: str = "cn-hangzhou"
+    captcha_enabled: bool = False
     captcha_scene_id: str = ""
+    captcha_prefix: str = ""
     captcha_endpoint: str = "captcha.cn-shanghai.aliyuncs.com"
     oss_endpoint: str = ""
     oss_bucket: str = ""
@@ -45,6 +151,11 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    llm_total_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        le=30,
+    )
     llm_max_retries: int = Field(default=1, ge=0, le=3)
     deepseek_price_input_per_million: float | None = Field(
         default=None,
@@ -156,6 +267,44 @@ class Settings(BaseSettings):
             raise ValueError("DEEPSEEK_MODEL 不能为空")
         return value
 
+    @field_validator("captcha_prefix")
+    @classmethod
+    def captcha_prefix_is_safe_dns_label(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            return ""
+        if (
+            len(normalized) > 63
+            or re.fullmatch(
+                r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+                normalized,
+            )
+            is None
+        ):
+            raise ValueError(
+                "CAPTCHA_PREFIX 必须是最长 63 字符的 DNS label"
+            )
+        return normalized
+
+    @field_validator("cookie_name", "trial_cookie_name")
+    @classmethod
+    def cookie_name_is_safe(cls, value: str) -> str:
+        normalized = value.strip()
+        if (
+            not normalized
+            or len(normalized) > 64
+            or any(
+                character not in (
+                    "abcdefghijklmnopqrstuvwxyz"
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                    "0123456789_-"
+                )
+                for character in normalized
+            )
+        ):
+            raise ValueError("Cookie 名称只能包含字母、数字、下划线和连字符")
+        return normalized
+
     @field_validator("deepseek_base_url")
     @classmethod
     def validate_deepseek_base_url(cls, value: str) -> str:
@@ -217,6 +366,12 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def validate_cookie_names(self) -> "Settings":
+        if self.cookie_name == self.trial_cookie_name:
+            raise ValueError("登录与试用 Cookie 名称必须不同")
+        return self
+
+    @model_validator(mode="after")
     def validate_attachment_temp_directory(self) -> "Settings":
         root = PROJECT_ROOT.resolve()
         temp_path = self.attachment_temp_path
@@ -225,9 +380,16 @@ class Settings(BaseSettings):
             self.database_path,
             self.statute_database_path,
         }
+        test_staging_path = _is_test_staging_path(temp_path, root)
         if (
             self.deployment_mode != "production"
-            and (temp_path == root or not temp_path.is_relative_to(root))
+            and (
+                temp_path == root
+                or (
+                    not temp_path.is_relative_to(root)
+                    and not test_staging_path
+                )
+            )
         ):
             raise ValueError("附件临时目录必须位于项目根目录内")
         if (
@@ -247,6 +409,11 @@ class Settings(BaseSettings):
             return self
 
         invalid: set[str] = set()
+        if (
+            self.rollout_stage == "public"
+            and not self.public_launch_approved
+        ):
+            invalid.add("PUBLIC_LAUNCH_APPROVED")
         dsn = self.database_dsn
         if dsn is None or urlparse(dsn).scheme != "postgresql+psycopg":
             invalid.add("DATABASE_URL")
@@ -298,7 +465,6 @@ class Settings(BaseSettings):
 
         required_text = {
             "DIRECTMAIL_ACCOUNT_NAME": self.directmail_account_name,
-            "CAPTCHA_SCENE_ID": self.captcha_scene_id,
             "OSS_ENDPOINT": self.oss_endpoint,
             "OSS_BUCKET": self.oss_bucket,
             "DELETION_MANIFEST_RECIPIENT": (
@@ -306,6 +472,13 @@ class Settings(BaseSettings):
             ),
             "PRIVACY_POLICY_VERSION": self.privacy_policy_version,
         }
+        if self.captcha_enabled:
+            required_text.update(
+                {
+                    "CAPTCHA_SCENE_ID": self.captcha_scene_id,
+                    "CAPTCHA_PREFIX": self.captcha_prefix,
+                }
+            )
         for field_name, value in required_text.items():
             if not value:
                 invalid.add(field_name)
@@ -354,6 +527,17 @@ class Settings(BaseSettings):
             return None
         parsed = urlparse(self.public_base_url)
         return f"{parsed.scheme}://{parsed.netloc}"
+
+    @property
+    def auth_rate_limits(self) -> dict[str, int]:
+        return {
+            "register": self.auth_register_rate_limit,
+            "resend_verification": self.auth_resend_rate_limit,
+            "verify_email": self.auth_verify_rate_limit,
+            "login": self.auth_login_rate_limit,
+            "forgot_password": self.auth_forgot_rate_limit,
+            "reset_password": self.auth_reset_rate_limit,
+        }
 
     def absolute_path(self, value: Path) -> Path:
         if value.is_absolute():
