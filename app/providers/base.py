@@ -9,6 +9,10 @@ from app.agent.models import (
     ExtractionResult,
     PolishingDraft,
 )
+from app.agent.grounding import (
+    GroundedAnswerComposition,
+    GroundingPacket,
+)
 from app.attachments.models import AttachmentEvidenceContext
 
 
@@ -21,6 +25,8 @@ class LLMProvider(Protocol):
         message: str,
         context: dict[str, object],
         evidence: tuple[AttachmentEvidenceContext, ...] = (),
+        *,
+        timeout_seconds: float | None = None,
     ) -> ExtractionResult:
         ...
 
@@ -29,10 +35,25 @@ class LLMProvider(Protocol):
         message: str,
         context: CaseContinuationContext,
         evidence: tuple[AttachmentEvidenceContext, ...] = (),
+        *,
+        timeout_seconds: float | None = None,
     ) -> CaseContinuationResult:
         ...
 
-    async def polish_text(self, draft: PolishingDraft) -> str:
+    async def compose_grounded_answer(
+        self,
+        packet: GroundingPacket,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> GroundedAnswerComposition:
+        ...
+
+    async def polish_text(
+        self,
+        draft: PolishingDraft,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> str:
         ...
 
 
