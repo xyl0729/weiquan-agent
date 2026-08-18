@@ -48,6 +48,7 @@ _PROCESSING_FAILURE_CODES = frozenset(
         "attachment_pixel_limit_exceeded",
         "attachment_extracted_text_too_long",
         "attachment_extraction_timeout",
+        "attachment_service_busy",
         "attachment_service_unavailable",
     }
 )

@@ -8,13 +8,13 @@ from app.attachments.errors import (
     AttachmentStateConflictError,
 )
 from app.attachments.models import AttachmentEvidenceContext
-from app.attachments.store import AttachmentStore
+from app.db.contracts import AttachmentRepository
 
 
 class EvidenceContextBuilder:
     def __init__(
         self,
-        store: AttachmentStore,
+        store: AttachmentRepository,
         *,
         max_attachments: int = 3,
         max_context_chars: int = 12_000,
@@ -31,6 +31,7 @@ class EvidenceContextBuilder:
         self,
         attachment_ids: Sequence[str],
         *,
+        owner_id: str,
         reservation_id: str,
     ) -> tuple[AttachmentEvidenceContext, ...]:
         normalized_ids = _attachment_ids(attachment_ids)
@@ -50,7 +51,10 @@ class EvidenceContextBuilder:
         evidence: list[AttachmentEvidenceContext] = []
         total_chars = 0
         for attachment_id in normalized_ids:
-            record = self.store.get(attachment_id)
+            record = self.store.get(
+                attachment_id,
+                owner_id=owner_id,
+            )
             if record.status == "bound":
                 raise AttachmentStateConflictError(
                     "attachment_already_bound"

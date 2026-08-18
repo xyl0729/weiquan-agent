@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -20,11 +19,13 @@ from app.attachments.models import (
     ExtractionResult,
     normalize_confirmed_text,
 )
+from app.db.contracts import (
+    LOCAL_DEVELOPMENT_OWNER_ID,
+    AttachmentBindingCommand,
+)
 from app.db.models import AttachmentRecord, attachment_record_from_row
 from app.db.session import SessionStore
 
-
-AttachmentBinder = Callable[[sqlite3.Connection, str, str], None]
 
 _PROCESSING_FAILURE_CODES = frozenset(
     {
@@ -39,6 +40,7 @@ _PROCESSING_FAILURE_CODES = frozenset(
         "attachment_pixel_limit_exceeded",
         "attachment_extracted_text_too_long",
         "attachment_extraction_timeout",
+        "attachment_service_busy",
         "attachment_service_unavailable",
     }
 )
@@ -61,6 +63,7 @@ class AttachmentStore:
     def create_processing(
         self,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         original_name: str,
         media_type: AttachmentMediaType,
         size_bytes: int,
@@ -69,8 +72,10 @@ class AttachmentStore:
         attachment_id: str | None = None,
     ) -> AttachmentRecord:
         current = self._utc(now)
+        normalized_owner_id = _uuid(owner_id)
         record = AttachmentRecord(
             id=_uuid(attachment_id),
+            owner_id=normalized_owner_id,
             session_id=None,
             turn_id=None,
             turn_position=None,
@@ -95,19 +100,20 @@ class AttachmentStore:
             connection.execute(
                 """
                 INSERT INTO attachments (
-                    id, session_id, turn_id, turn_position, status,
-                    original_name, media_type, size_bytes, sha256,
-                    page_count, extraction_method, extracted_blocks_json,
-                    confirmed_text, warnings_json, error_code,
-                    reservation_id, reserved_at, created_at, updated_at,
-                    expires_at
+                    id, owner_id, session_id, turn_id, turn_position,
+                    status, original_name, media_type, size_bytes,
+                    sha256, page_count, extraction_method,
+                    extracted_blocks_json, confirmed_text, warnings_json,
+                    error_code, reservation_id, reserved_at, created_at,
+                    updated_at, expires_at
                 ) VALUES (
-                    ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL,
+                    ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL,
                     '[]', NULL, '[]', NULL, NULL, NULL, ?, ?, ?
                 )
                 """,
                 (
                     record.id,
+                    record.owner_id,
                     record.status,
                     record.original_name,
                     record.media_type,
@@ -125,12 +131,18 @@ class AttachmentStore:
         attachment_id: str,
         result: ExtractionResult,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> AttachmentRecord:
         normalized_id = _uuid(attachment_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self.sessions.transaction(immediate=True) as connection:
-            record = self._require_record(connection, normalized_id)
+            record = self._require_record(
+                connection,
+                normalized_id,
+                normalized_owner_id,
+            )
             self._require_unexpired(record, current)
             if record.status == "bound":
                 raise AttachmentStateConflictError(
@@ -160,7 +172,7 @@ class AttachmentStore:
                 SET status = ?, page_count = ?, extraction_method = ?,
                     extracted_blocks_json = ?, warnings_json = ?,
                     error_code = NULL, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND owner_id = ?
                 """,
                 (
                     candidate.status,
@@ -170,23 +182,34 @@ class AttachmentStore:
                     _json_array(candidate.warnings),
                     _iso(candidate.updated_at),
                     normalized_id,
+                    normalized_owner_id,
                 ),
             )
-            return self._require_record(connection, normalized_id)
+            return self._require_record(
+                connection,
+                normalized_id,
+                normalized_owner_id,
+            )
 
     def save_failure(
         self,
         attachment_id: str,
         code: AttachmentErrorCode,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> AttachmentRecord:
         if code not in _PROCESSING_FAILURE_CODES:
             raise ValueError("错误代码不能作为附件处理失败结果")
         normalized_id = _uuid(attachment_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self.sessions.transaction(immediate=True) as connection:
-            record = self._require_record(connection, normalized_id)
+            record = self._require_record(
+                connection,
+                normalized_id,
+                normalized_owner_id,
+            )
             self._require_unexpired(record, current)
             if record.status == "bound":
                 raise AttachmentStateConflictError(
@@ -216,31 +239,42 @@ class AttachmentStore:
                     extracted_blocks_json = '[]',
                     confirmed_text = NULL, warnings_json = '[]',
                     error_code = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND owner_id = ?
                 """,
                 (
                     candidate.status,
                     candidate.error_code,
                     _iso(candidate.updated_at),
                     normalized_id,
+                    normalized_owner_id,
                 ),
             )
-            return self._require_record(connection, normalized_id)
+            return self._require_record(
+                connection,
+                normalized_id,
+                normalized_owner_id,
+            )
 
     def confirm(
         self,
         attachment_id: str,
         confirmed_text: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> AttachmentRecord:
         normalized_id = _uuid(attachment_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         normalized_text = normalize_confirmed_text(confirmed_text)
         assert normalized_text is not None
 
         with self.sessions.transaction(immediate=True) as connection:
-            record = self._require_record(connection, normalized_id)
+            record = self._require_record(
+                connection,
+                normalized_id,
+                normalized_owner_id,
+            )
             self._require_unexpired(record, current)
             if record.status == "bound" or record.reservation_id is not None:
                 raise AttachmentStateConflictError(
@@ -262,23 +296,33 @@ class AttachmentStore:
                 UPDATE attachments
                 SET status = 'confirmed', confirmed_text = ?,
                     updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND owner_id = ?
                 """,
                 (
                     candidate.confirmed_text,
                     _iso(candidate.updated_at),
                     normalized_id,
+                    normalized_owner_id,
                 ),
             )
-            return self._require_record(connection, normalized_id)
+            return self._require_record(
+                connection,
+                normalized_id,
+                normalized_owner_id,
+            )
 
     def get(
         self,
         attachment_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> AttachmentRecord:
-        record = self.get_optional(attachment_id, now=now)
+        record = self.get_optional(
+            attachment_id,
+            owner_id=owner_id,
+            now=now,
+        )
         if record is None:
             raise AttachmentNotFoundError()
         return record
@@ -287,14 +331,19 @@ class AttachmentStore:
         self,
         attachment_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> AttachmentRecord | None:
         normalized_id = _uuid(attachment_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self.sessions.transaction() as connection:
             row = connection.execute(
-                "SELECT * FROM attachments WHERE id = ?",
-                (normalized_id,),
+                """
+                SELECT * FROM attachments
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_id, normalized_owner_id),
             ).fetchone()
         if row is None:
             return None
@@ -307,10 +356,12 @@ class AttachmentStore:
         self,
         attachment_ids: Sequence[str],
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         reservation_id: str | None = None,
         now: datetime | None = None,
     ) -> str:
         normalized_ids = _attachment_ids(attachment_ids)
+        normalized_owner_id = _uuid(owner_id)
         normalized_reservation = _uuid(reservation_id)
         current = self._utc(now)
 
@@ -319,17 +370,21 @@ class AttachmentStore:
                 """
                 SELECT 1
                 FROM attachments
-                WHERE reservation_id = ?
+                WHERE owner_id = ? AND reservation_id = ?
                 LIMIT 1
                 """,
-                (normalized_reservation,),
+                (normalized_owner_id, normalized_reservation),
             ).fetchone()
             if existing_reservation is not None:
                 raise AttachmentStateConflictError(
                     "attachment_already_bound"
                 )
 
-            records = self._records_by_ids(connection, normalized_ids)
+            records = self._records_by_ids(
+                connection,
+                normalized_ids,
+                normalized_owner_id,
+            )
             for record in records:
                 self._require_unexpired(record, current)
                 if (
@@ -351,6 +406,7 @@ class AttachmentStore:
                     SET reservation_id = ?, reserved_at = ?,
                         turn_position = ?, updated_at = ?
                     WHERE id = ?
+                      AND owner_id = ?
                       AND status = 'confirmed'
                       AND reservation_id IS NULL
                       AND session_id IS NULL
@@ -362,6 +418,7 @@ class AttachmentStore:
                         position,
                         _iso(current),
                         attachment_id,
+                        normalized_owner_id,
                     ),
                 )
                 if cursor.rowcount != 1:
@@ -374,9 +431,11 @@ class AttachmentStore:
         self,
         reservation_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> int:
         normalized_reservation = _uuid(reservation_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self.sessions.transaction(immediate=True) as connection:
             cursor = connection.execute(
@@ -385,11 +444,16 @@ class AttachmentStore:
                 SET reservation_id = NULL, reserved_at = NULL,
                     turn_position = NULL, updated_at = ?
                 WHERE reservation_id = ?
+                  AND owner_id = ?
                   AND status = 'confirmed'
                   AND session_id IS NULL
                   AND turn_id IS NULL
                 """,
-                (_iso(current), normalized_reservation),
+                (
+                    _iso(current),
+                    normalized_reservation,
+                    normalized_owner_id,
+                ),
             )
         return max(cursor.rowcount, 0)
 
@@ -397,154 +461,80 @@ class AttachmentStore:
         self,
         reservation_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         session_id: str,
         turn_id: str,
         expected_ids: Sequence[str],
         now: datetime | None = None,
     ) -> list[AttachmentRecord]:
-        normalized_turn_id = _uuid(turn_id)
-        binder = self.reservation_binder(
-            reservation_id,
-            expected_ids=expected_ids,
+        normalized_ids = _attachment_ids(expected_ids)
+        return self.sessions.bind_reserved_attachments(
+            AttachmentBindingCommand(
+                reservation_id=_uuid(reservation_id),
+                attachment_ids=normalized_ids,
+            ),
+            owner_id=owner_id,
+            session_id=session_id,
+            turn_id=turn_id,
             now=now,
         )
-        with self.sessions.transaction(immediate=True) as connection:
-            binder(connection, session_id, normalized_turn_id)
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM attachments
-                WHERE turn_id = ?
-                ORDER BY turn_position, id
-                """,
-                (normalized_turn_id,),
-            ).fetchall()
-            records = [
-                attachment_record_from_row(row)
-                for row in rows
-            ]
-        return records
 
-    def reservation_binder(
+    def list_for_turn(
         self,
-        reservation_id: str,
+        turn_id: str,
         *,
-        expected_ids: Sequence[str],
-        now: datetime | None = None,
-    ) -> AttachmentBinder:
-        normalized_reservation = _uuid(reservation_id)
-        normalized_ids = _attachment_ids(expected_ids)
-        current = self._utc(now)
-
-        def bind(
-            connection: sqlite3.Connection,
-            session_id: str,
-            turn_id: str,
-        ) -> None:
-            normalized_session_id = _uuid(session_id)
-            normalized_turn_id = _uuid(turn_id)
-            existing_binding = connection.execute(
-                """
-                SELECT 1
-                FROM attachments
-                WHERE turn_id = ?
-                LIMIT 1
-                """,
-                (normalized_turn_id,),
-            ).fetchone()
-            if existing_binding is not None:
-                raise AttachmentStateConflictError(
-                    "attachment_already_bound"
-                )
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM attachments
-                WHERE reservation_id = ?
-                ORDER BY turn_position, id
-                """,
-                (normalized_reservation,),
-            ).fetchall()
-            records = [
-                attachment_record_from_row(row)
-                for row in rows
-            ]
-            stored_ids = tuple(record.id for record in records)
-            if stored_ids != normalized_ids:
-                raise AttachmentStateConflictError(
-                    "attachment_already_bound"
-                )
-            for position, record in enumerate(records):
-                self._require_unexpired(record, current)
-                if (
-                    record.status != "confirmed"
-                    or record.turn_position != position
-                ):
-                    raise AttachmentStateConflictError(
-                        "attachment_not_confirmed"
-                    )
-                cursor = connection.execute(
-                    """
-                    UPDATE attachments
-                    SET status = 'bound', session_id = ?, turn_id = ?,
-                        reservation_id = NULL, reserved_at = NULL,
-                        expires_at = NULL, updated_at = ?
-                    WHERE id = ?
-                      AND status = 'confirmed'
-                      AND reservation_id = ?
-                      AND turn_position = ?
-                    """,
-                    (
-                        normalized_session_id,
-                        normalized_turn_id,
-                        _iso(current),
-                        record.id,
-                        normalized_reservation,
-                        position,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise AttachmentStateConflictError(
-                        "attachment_already_bound"
-                    )
-
-        return bind
-
-    def list_for_turn(self, turn_id: str) -> list[AttachmentRecord]:
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+    ) -> list[AttachmentRecord]:
         normalized_turn_id = _uuid(turn_id)
+        normalized_owner_id = _uuid(owner_id)
         with self.sessions.transaction() as connection:
             rows = connection.execute(
                 """
                 SELECT *
                 FROM attachments
-                WHERE turn_id = ? AND status = 'bound'
+                WHERE turn_id = ? AND owner_id = ? AND status = 'bound'
                 ORDER BY turn_position, id
                 """,
-                (normalized_turn_id,),
+                (normalized_turn_id, normalized_owner_id),
             ).fetchall()
         return [attachment_record_from_row(row) for row in rows]
 
-    def delete(self, attachment_id: str) -> None:
+    def delete(
+        self,
+        attachment_id: str,
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+    ) -> None:
         normalized_id = _uuid(attachment_id)
+        normalized_owner_id = _uuid(owner_id)
         with self.sessions.transaction(immediate=True) as connection:
-            record = self._require_record(connection, normalized_id)
+            record = self._require_record(
+                connection,
+                normalized_id,
+                normalized_owner_id,
+            )
             if record.status == "bound" or record.reservation_id is not None:
                 raise AttachmentStateConflictError(
                     "attachment_already_bound"
                 )
             connection.execute(
-                "DELETE FROM attachments WHERE id = ?",
-                (normalized_id,),
+                """
+                DELETE FROM attachments
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_id, normalized_owner_id),
             )
 
     def purge_expired(
         self,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
         limit: int = 100,
     ) -> int:
         if limit <= 0:
             raise ValueError("limit 必须大于 0")
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self.sessions.transaction(immediate=True) as connection:
             cursor = connection.execute(
@@ -553,24 +543,31 @@ class AttachmentStore:
                 WHERE id IN (
                     SELECT id
                     FROM attachments
-                    WHERE session_id IS NULL
+                    WHERE owner_id = ?
+                      AND session_id IS NULL
                       AND expires_at <= ?
                     ORDER BY expires_at, id
                     LIMIT ?
                 )
                 """,
-                (_iso(current), int(limit)),
+                (
+                    normalized_owner_id,
+                    _iso(current),
+                    int(limit),
+                ),
             )
         return max(cursor.rowcount, 0)
 
     def fail_stale_processing(
         self,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
         limit: int = 100,
     ) -> int:
         if limit <= 0:
             raise ValueError("limit 必须大于 0")
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self.sessions.transaction(immediate=True) as connection:
             cursor = connection.execute(
@@ -587,23 +584,32 @@ class AttachmentStore:
                 WHERE id IN (
                     SELECT id
                     FROM attachments
-                    WHERE status = 'processing'
+                    WHERE owner_id = ?
+                      AND status IN ('processing', 'review_required')
                     ORDER BY created_at, id
                     LIMIT ?
                 )
                 """,
-                (_iso(current), int(limit)),
+                (
+                    _iso(current),
+                    normalized_owner_id,
+                    int(limit),
+                ),
             )
         return max(cursor.rowcount, 0)
 
     @staticmethod
     def _require_record(
-        connection: sqlite3.Connection,
+        connection: Any,
         attachment_id: str,
+        owner_id: str,
     ) -> AttachmentRecord:
         row = connection.execute(
-            "SELECT * FROM attachments WHERE id = ?",
-            (attachment_id,),
+            """
+            SELECT * FROM attachments
+            WHERE id = ? AND owner_id = ?
+            """,
+            (attachment_id, owner_id),
         ).fetchone()
         if row is None:
             raise AttachmentNotFoundError()
@@ -611,17 +617,19 @@ class AttachmentStore:
 
     def _records_by_ids(
         self,
-        connection: sqlite3.Connection,
+        connection: Any,
         attachment_ids: tuple[str, ...],
+        owner_id: str,
     ) -> list[AttachmentRecord]:
         placeholders = ", ".join("?" for _ in attachment_ids)
         rows = connection.execute(
             f"""
             SELECT *
             FROM attachments
-            WHERE id IN ({placeholders})
+            WHERE owner_id = ?
+              AND id IN ({placeholders})
             """,
-            attachment_ids,
+            (owner_id, *attachment_ids),
         ).fetchall()
         by_id = {
             record.id: record

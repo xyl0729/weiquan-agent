@@ -6,7 +6,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import ValidationError
 
@@ -15,6 +15,7 @@ from app.agent.errors import (
     SessionNotFoundError,
     StorageUnavailableError,
 )
+from app.agent.grounding import GENERAL_BASIS_REF_SET
 from app.api.schemas import ConsultResponse
 from app.attachments.projection import attachment_turn_public
 from app.db.models import (
@@ -23,7 +24,7 @@ from app.db.models import (
     SessionRecord,
     TurnRecord,
 )
-from app.db.session import SessionStore
+from app.db.contracts import HistoryRepository
 from app.playbooks.registry import PlaybookRegistry
 
 
@@ -36,6 +37,8 @@ _TURN_KINDS = {
     "plan_update",
     "followup_answer",
     "new_case",
+    "unverified_guidance",
+    "emergency_guidance",
 }
 _LEGACY_REPEAT_REPLY = (
     "本轮未记录到新的方案变化，前一份方案仍然有效。"
@@ -67,19 +70,39 @@ class SessionDetail:
     turns: tuple[HistoryTurn, ...]
 
 
+class RecoverableDeletionService(Protocol):
+    def delete_session(
+        self,
+        session_id: str,
+        *,
+        owner_id: str,
+    ) -> bool: ...
+
+
 class SessionHistoryService:
     def __init__(
         self,
-        store: SessionStore,
+        store: HistoryRepository,
         registry: PlaybookRegistry,
+        *,
+        deletion_service: RecoverableDeletionService | None = None,
     ) -> None:
         self.store = store
         self.registry = registry
+        self.deletion_service = deletion_service
 
-    def list_sessions(self) -> list[HistorySession]:
+    def list_sessions(
+        self,
+        *,
+        owner_id: str,
+    ) -> list[HistorySession]:
         try:
-            records = self.store.list_sessions()
-            return [_history_session(record) for record in records]
+            records = self.store.list_sessions(owner_id=owner_id)
+            return [
+                _history_session(record)
+                for record in records
+                if record.status in _PUBLIC_STATUSES
+            ]
         except DataIntegrityError:
             raise
         except (ValidationError, ValueError) as exc:
@@ -87,9 +110,17 @@ class SessionHistoryService:
         except (OSError, sqlite3.Error) as exc:
             raise StorageUnavailableError() from exc
 
-    def get_session(self, session_id: str) -> SessionDetail:
+    def get_session(
+        self,
+        session_id: str,
+        *,
+        owner_id: str,
+    ) -> SessionDetail:
         try:
-            stored = self.store.get_session_history(session_id)
+            stored = self.store.get_session_history(
+                session_id,
+                owner_id=owner_id,
+            )
         except (
             LookupError,
             TypeError,
@@ -112,6 +143,9 @@ class SessionHistoryService:
             public_turns = _project_history_turns(
                 stored.turns,
                 allowed_citations=allowed_citations,
+                session_has_no_formal_scenario=(
+                    stored.session.scenario_id is None
+                ),
             )
         except DataIntegrityError:
             raise
@@ -125,9 +159,23 @@ class SessionHistoryService:
             turns=public_turns,
         )
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(
+        self,
+        session_id: str,
+        *,
+        owner_id: str,
+    ) -> None:
+        if self.deletion_service is not None:
+            self.deletion_service.delete_session(
+                session_id,
+                owner_id=owner_id,
+            )
+            return
         try:
-            self.store.delete_session(session_id)
+            self.store.delete_session(
+                session_id,
+                owner_id=owner_id,
+            )
         except ValueError as exc:
             raise _history_integrity_error() from exc
         except (OSError, sqlite3.Error) as exc:
@@ -195,6 +243,7 @@ def _project_history_turns(
     turns: Sequence[SessionHistoryTurnRecord],
     *,
     allowed_citations: set[str],
+    session_has_no_formal_scenario: bool,
 ) -> tuple[HistoryTurn, ...]:
     projected: list[HistoryTurn] = []
     previous_plan: dict[str, Any] | None = None
@@ -241,9 +290,18 @@ def _project_history_turns(
             # Keep the invalid value so public-schema validation fails closed.
             pass
 
+        coverage = payload.get("coverage")
+        guidance_coverage = (
+            isinstance(coverage, Mapping)
+            and coverage.get("mode")
+            in {"unverified_guidance", "emergency_guidance"}
+        )
         payload = _filter_citations(
             payload,
             allowed_citations=allowed_citations,
+            legacy_general_basis=(
+                session_has_no_formal_scenario or guidance_coverage
+            ),
         )
         history_turn = _history_turn(turn, payload)
         projected.append(history_turn)
@@ -278,19 +336,27 @@ def _filter_citations(
     response: Mapping[str, Any],
     *,
     allowed_citations: set[str],
+    legacy_general_basis: bool,
 ) -> dict[str, Any]:
     payload = deepcopy(dict(response))
     citations = payload.get("citations")
     filtered_any = False
     if isinstance(citations, list):
-        filtered = [
-            item
-            for item in citations
+        filtered: list[dict[str, Any]] = []
+        for item in citations:
             if (
-                isinstance(item, Mapping)
-                and item.get("ref") in allowed_citations
-            )
-        ]
+                not isinstance(item, Mapping)
+                or item.get("ref") not in allowed_citations
+            ):
+                continue
+            projected_item = deepcopy(dict(item))
+            if (
+                legacy_general_basis
+                and "basis_scope" not in projected_item
+                and projected_item.get("ref") in GENERAL_BASIS_REF_SET
+            ):
+                projected_item["basis_scope"] = "general"
+            filtered.append(projected_item)
         filtered_any = len(filtered) != len(citations)
         payload["citations"] = filtered
 
@@ -319,9 +385,12 @@ def _allowed_citation_refs(
     scenario_id: str | None,
 ) -> set[str]:
     if scenario_id is None:
-        return set()
+        return set(GENERAL_BASIS_REF_SET)
     playbook = registry.get(scenario_id)
-    return {basis.ref for basis in playbook.legal_basis}
+    return {
+        *GENERAL_BASIS_REF_SET,
+        *(basis.ref for basis in playbook.legal_basis),
+    }
 
 
 def _validate_public_status(status: str) -> None:

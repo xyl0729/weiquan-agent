@@ -20,20 +20,29 @@ from app.attachments.errors import (
     AttachmentServiceUnavailableError,
     build_attachment_error,
 )
+from app.attachments.drafts import OcrDraftStore
 from app.attachments.models import (
     AttachmentMediaType,
     ExtractionResult,
     validate_attachment_name,
 )
-from app.attachments.store import AttachmentStore
 from app.attachments.worker import (
     WorkerFailure,
     WorkerJob,
     WorkerLimits,
     parse_worker_envelope,
 )
-from app.config import PROJECT_ROOT
+from app.config import PROJECT_ROOT, _is_test_staging_path
+from app.db.contracts import (
+    LOCAL_DEVELOPMENT_OWNER_ID,
+    AttachmentRepository,
+)
 from app.db.models import AttachmentRecord
+from app.execution.bounded import (
+    BoundedExecutionBusyError,
+    BoundedExecutionTimeoutError,
+    BoundedExecutor,
+)
 
 
 _PDF_SIGNATURE = b"%PDF-"
@@ -220,7 +229,7 @@ class SubprocessExtractionWorker:
 class AttachmentService:
     def __init__(
         self,
-        store: AttachmentStore,
+        store: AttachmentRepository,
         *,
         temp_dir: Path,
         max_file_bytes: int,
@@ -230,9 +239,12 @@ class AttachmentService:
         low_confidence_threshold: float,
         extraction_timeout_seconds: float,
         worker: ExtractionWorker | object | None = None,
+        draft_store: OcrDraftStore | None = None,
+        executor: BoundedExecutor | None = None,
     ) -> None:
         self.store = store
         self.temp_dir = _validated_temp_directory(temp_dir)
+        self.drafts = draft_store or OcrDraftStore(self.temp_dir)
         self.limits = WorkerLimits(
             max_file_bytes=max_file_bytes,
             max_pdf_pages=max_pdf_pages,
@@ -247,19 +259,36 @@ class AttachmentService:
                 timeout_seconds=extraction_timeout_seconds
             ),
         )
+        self.extraction_timeout_seconds = float(
+            extraction_timeout_seconds
+        )
+        self.executor = executor or BoundedExecutor(
+            name="ocr",
+            max_concurrency=1,
+            max_waiting=2,
+        )
         self._active_paths: set[Path] = set()
 
-    async def upload(self, request: Any) -> AttachmentRecord:
+    async def upload(
+        self,
+        request: Any,
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+    ) -> AttachmentRecord:
         return await self.process_multipart(
             request.headers.get("content-type"),
             request.stream(),
+            owner_id=owner_id,
         )
 
     async def process_multipart(
         self,
         content_type: str | None,
         chunks: AsyncIterable[bytes],
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
     ) -> AttachmentRecord:
+        normalized_owner_id = _uuid(owner_id)
         boundary = _multipart_boundary(content_type)
         self._ensure_temp_directory()
         source_path, job_path, result_path = self._new_paths()
@@ -281,35 +310,94 @@ class AttachmentService:
                 upload.declared_media_type,
             )
             record = self.store.create_processing(
+                owner_id=normalized_owner_id,
                 original_name=upload.original_name,
                 media_type=media_type,
                 size_bytes=upload.size_bytes,
                 sha256=upload.sha256,
             )
             try:
-                extraction = await self.worker.extract(
-                    source_path,
-                    declared_media_type=upload.declared_media_type,
-                    limits=self.limits,
-                    job_path=job_path,
-                    result_path=result_path,
+                extraction = await self.executor.run(
+                    lambda: self.worker.extract(
+                        source_path,
+                        declared_media_type=upload.declared_media_type,
+                        limits=self.limits,
+                        job_path=job_path,
+                        result_path=result_path,
+                    ),
+                    total_timeout_seconds=(
+                        self.extraction_timeout_seconds
+                    ),
                 )
             except asyncio.CancelledError:
-                self._save_failure_after_cancellation(record.id)
+                self._save_failure_after_cancellation(
+                    record.id,
+                    owner_id=normalized_owner_id,
+                )
                 raise
+            except BoundedExecutionBusyError:
+                return self.store.save_failure(
+                    record.id,
+                    "attachment_service_busy",
+                    owner_id=normalized_owner_id,
+                )
+            except BoundedExecutionTimeoutError:
+                return self.store.save_failure(
+                    record.id,
+                    "attachment_extraction_timeout",
+                    owner_id=normalized_owner_id,
+                )
             except AttachmentError as exc:
-                return self.store.save_failure(record.id, exc.code)
+                return self.store.save_failure(
+                    record.id,
+                    exc.code,
+                    owner_id=normalized_owner_id,
+                )
             except Exception:
                 return self.store.save_failure(
                     record.id,
                     "attachment_service_unavailable",
+                    owner_id=normalized_owner_id,
                 )
             if extraction.media_type != media_type:
                 return self.store.save_failure(
                     record.id,
                     "attachment_type_mismatch",
+                    owner_id=normalized_owner_id,
                 )
-            return self.store.save_extraction(record.id, extraction)
+            try:
+                self.drafts.save(
+                    record.id,
+                    extraction,
+                    owner_id=normalized_owner_id,
+                )
+            except (OSError, ValueError):
+                return self.store.save_failure(
+                    record.id,
+                    "attachment_service_unavailable",
+                    owner_id=normalized_owner_id,
+                )
+            try:
+                saved = self.store.save_extraction(
+                    record.id,
+                    extraction,
+                    owner_id=normalized_owner_id,
+                )
+                return self._hydrate_review(
+                    saved,
+                    owner_id=normalized_owner_id,
+                )
+            except BaseException as exc:
+                self._delete_draft_after_failure(
+                    record.id,
+                    owner_id=normalized_owner_id,
+                )
+                if isinstance(exc, AttachmentError) or not isinstance(
+                    exc,
+                    Exception,
+                ):
+                    raise
+                raise AttachmentServiceUnavailableError() from exc
         finally:
             for path in managed_paths:
                 _safe_unlink(path, self.temp_dir)
@@ -318,17 +406,123 @@ class AttachmentService:
     def recover(
         self,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         limit: int = _DEFAULT_CLEANUP_LIMIT,
     ) -> tuple[int, int]:
         if limit <= 0:
             raise ValueError("limit 必须大于 0")
+        normalized_owner_id = _uuid(owner_id)
         self._ensure_temp_directory()
         recovered = 0
         try:
-            recovered = self.store.fail_stale_processing(limit=limit)
+            recovered = self.store.fail_stale_processing(
+                owner_id=normalized_owner_id,
+                limit=limit,
+            )
         finally:
             removed = self.cleanup_orphans(limit=limit)
+            removed += self.drafts.cleanup_all(limit=limit)
         return recovered, removed
+
+    def get(
+        self,
+        attachment_id: str,
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+    ) -> AttachmentRecord:
+        normalized_owner_id = _uuid(owner_id)
+        record = self.store.get(
+            attachment_id,
+            owner_id=normalized_owner_id,
+        )
+        return self._hydrate_review(record, owner_id=normalized_owner_id)
+
+    def confirm(
+        self,
+        attachment_id: str,
+        confirmed_text: str,
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+    ) -> AttachmentRecord:
+        normalized_owner_id = _uuid(owner_id)
+        current = self.store.get(
+            attachment_id,
+            owner_id=normalized_owner_id,
+        )
+        current = self._hydrate_review(
+            current,
+            owner_id=normalized_owner_id,
+        )
+        record = self.store.confirm(
+            attachment_id,
+            confirmed_text,
+            owner_id=normalized_owner_id,
+        )
+        if not record.extracted_blocks:
+            record = record.model_copy(
+                update={"extracted_blocks": current.extracted_blocks}
+            )
+        try:
+            self.drafts.delete(
+                record.id,
+                owner_id=normalized_owner_id,
+            )
+        except OSError:
+            raise AttachmentServiceUnavailableError() from None
+        return record
+
+    def delete(
+        self,
+        attachment_id: str,
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+    ) -> None:
+        normalized_owner_id = _uuid(owner_id)
+        self.store.delete(
+            attachment_id,
+            owner_id=normalized_owner_id,
+        )
+        try:
+            self.drafts.delete(
+                attachment_id,
+                owner_id=normalized_owner_id,
+            )
+        except OSError:
+            raise AttachmentServiceUnavailableError() from None
+
+    def purge_expired(
+        self,
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+        now: Any | None = None,
+        limit: int = _DEFAULT_CLEANUP_LIMIT,
+    ) -> int:
+        if limit <= 0:
+            raise ValueError("limit 必须大于 0")
+        normalized_owner_id = _uuid(owner_id)
+        removed = self.store.purge_expired(
+            owner_id=normalized_owner_id,
+            now=now,
+            limit=limit,
+        )
+
+        def exists(candidate_owner: str, candidate_id: str) -> bool:
+            if candidate_owner != normalized_owner_id:
+                return True
+            return (
+                self.store.get_optional(
+                    candidate_id,
+                    owner_id=normalized_owner_id,
+                    now=now,
+                )
+                is not None
+            )
+
+        try:
+            self.drafts.cleanup_orphans(exists, limit=limit)
+        except OSError:
+            raise AttachmentServiceUnavailableError() from None
+        return removed
 
     def cleanup_orphans(
         self,
@@ -375,14 +569,52 @@ class AttachmentService:
     def _save_failure_after_cancellation(
         self,
         attachment_id: str,
+        *,
+        owner_id: str,
     ) -> None:
         try:
             self.store.save_failure(
                 attachment_id,
                 "attachment_service_unavailable",
+                owner_id=owner_id,
             )
         except Exception:
             pass
+        self._delete_draft_after_failure(
+            attachment_id,
+            owner_id=owner_id,
+        )
+
+    def _delete_draft_after_failure(
+        self,
+        attachment_id: str,
+        *,
+        owner_id: str,
+    ) -> None:
+        try:
+            self.drafts.delete(
+                attachment_id,
+                owner_id=owner_id,
+            )
+        except OSError:
+            pass
+
+    def _hydrate_review(
+        self,
+        record: AttachmentRecord,
+        *,
+        owner_id: str,
+    ) -> AttachmentRecord:
+        if (
+            record.status
+            not in {"review_required", "confirmed", "bound"}
+            or record.extracted_blocks
+        ):
+            return record
+        result = self.drafts.load(record.id, owner_id=owner_id)
+        if result is None:
+            raise AttachmentServiceUnavailableError()
+        return record.model_copy(update={"extracted_blocks": result.blocks})
 
 
 class _CompletedUpload:
@@ -655,9 +887,13 @@ def _validated_temp_directory(value: Path) -> Path:
     root = PROJECT_ROOT.resolve()
     temp_dir = Path(value).resolve()
     static_dir = (root / "app" / "web").resolve()
+    test_staging_root = _is_test_staging_path(temp_dir, root)
     if (
         temp_dir == root
-        or not temp_dir.is_relative_to(root)
+        or (
+            not temp_dir.is_relative_to(root)
+            and not test_staging_root
+        )
         or temp_dir == static_dir
         or temp_dir.is_relative_to(static_dir)
     ):
@@ -665,6 +901,15 @@ def _validated_temp_directory(value: Path) -> Path:
     if temp_dir.exists() and not temp_dir.is_dir():
         raise ValueError("附件临时目录不能指向普通文件")
     return temp_dir
+
+
+def _uuid(value: object) -> str:
+    from uuid import UUID
+
+    try:
+        return str(UUID(str(value)))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError("ID 必须是有效 UUID") from exc
 
 
 def _require_shared_temp_paths(

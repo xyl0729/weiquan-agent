@@ -25,6 +25,7 @@ AttachmentErrorCode: TypeAlias = Literal[
     "attachment_already_bound",
     "attachment_count_exceeded",
     "attachment_context_too_long",
+    "attachment_service_busy",
     "attachment_service_unavailable",
 ]
 
@@ -112,6 +113,10 @@ ATTACHMENT_ERROR_SPECS: Mapping[
             503,
             "本地文字提取暂时不可用，仍可继续文字咨询",
         ),
+        "attachment_service_busy": AttachmentErrorSpec(
+            503,
+            "文字提取任务较多，请稍后重试",
+        ),
     }
 )
 
@@ -183,6 +188,11 @@ class AttachmentServiceUnavailableError(AttachmentError):
         super().__init__("attachment_service_unavailable")
 
 
+class AttachmentServiceBusyError(AttachmentError):
+    def __init__(self) -> None:
+        super().__init__("attachment_service_busy")
+
+
 def build_attachment_error(code: str) -> AttachmentError:
     if code in _INPUT_CODES:
         return AttachmentInputError(code)  # type: ignore[arg-type]
@@ -194,4 +204,6 @@ def build_attachment_error(code: str) -> AttachmentError:
         return AttachmentStateConflictError(code)  # type: ignore[arg-type]
     if code == "attachment_service_unavailable":
         return AttachmentServiceUnavailableError()
+    if code == "attachment_service_busy":
+        return AttachmentServiceBusyError()
     raise ValueError("未知附件错误代码")
