@@ -1,0 +1,19 @@
+[Unit]
+Description=Resource and service checks for Weiquan
+After=docker.service nginx.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/weiquan/monitor.env
+ExecStart=/usr/bin/flock -n /run/lock/weiquan-monitor.lock /usr/bin/bash /srv/weiquan/current/deploy/monitoring/check-services.sh
+TimeoutStartSec=2min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/srv/weiquan/current /srv/weiquan/backup-staging /var/log/nginx
+ReadWritePaths=/run/lock
+
+[Install]
+WantedBy=multi-user.target

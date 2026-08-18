@@ -1,0 +1,19 @@
+[Unit]
+Description=Bounded retention cleanup for Weiquan
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/weiquan/current
+ExecStart=/usr/bin/flock -n /run/lock/weiquan-cleanup.lock /usr/bin/docker compose -f deploy/compose.production.yml exec -T app python -m app.jobs.cleanup --limit 100
+TimeoutStartSec=15min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/lock
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted PostgreSQL backup for Weiquan
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 Asia/Shanghai
+RandomizedDelaySec=15min
+Persistent=true
+Unit=weiquan-backup.service
+
+[Install]
+WantedBy=timers.target

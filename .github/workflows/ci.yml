@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  production-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_DB: weiquan_test
+          POSTGRES_USER: weiquan_test
+          POSTGRES_PASSWORD: local-integration-only
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U weiquan_test -d weiquan_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      TEST_POSTGRES_URL: postgresql+psycopg://weiquan_test:local-integration-only@127.0.0.1:55432/weiquan_test
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip -r requirements-dev.txt
+
+      - name: Build statute database from tracked seed
+        run: python scripts/ingest_statutes.py
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run full test suite without external sockets
+        run: >-
+          python -m pytest -q
+          --disable-socket
+          --allow-hosts=127.0.0.1,localhost,::1
+
+      - name: Verify Alembic head and model metadata
+        env:
+          DATABASE_URL: postgresql+psycopg://weiquan_test:local-integration-only@127.0.0.1:55432/weiquan_test
+        run: |
+          python -m alembic upgrade head
+          python -m alembic check
+
+      - name: Verify statute references and retrieval recall
+        run: |
+          python scripts/verify_refs.py
+          python scripts/check_recall.py
+
+      - name: Audit Python dependencies
+        run: python -m pip_audit
+
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check app/web/js/api.js
+          node --check app/web/js/state.js
+          node --check app/web/js/auth.js
+          node --check app/web/js/captcha.js
+          node --check app/web/js/privacy.js
+          node --check app/web/js/render.js
+          node --check app/web/js/app.js
+
+      - name: Validate production Compose
+        run: |
+          sudo install -d -m 755 /etc/weiquan
+          sudo install -m 600 /dev/null /etc/weiquan/weiquan.env
+          docker compose -f deploy/compose.production.yml config
+
+      - name: Check patch whitespace
+        run: git diff --check

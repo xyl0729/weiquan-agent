@@ -1,4 +1,5 @@
-fastapi>=0.116.2,<0.117
+fastapi>=0.141.1,<0.142
+starlette>=1.3.1,<1.7
 uvicorn[standard]>=0.35.0,<0.36
 pydantic>=2.13.4,<2.14
 pydantic-settings>=2.14.2,<2.15
@@ -8,16 +9,19 @@ psycopg[binary]>=3.2.9,<4
 alembic>=1.16.4,<2
 argon2-cffi>=25.1.0,<26
 email-validator>=2.2.0,<3
-cryptography>=45.0.6,<47
-alibabacloud-dm20151123>=1.0.0,<2
-alibabacloud-captcha20230305>=1.0.0,<2
+cryptography>=50.0.0,<51
+# Newer DirectMail SDK releases require tea-openapi 0.4.x, which caps
+# cryptography below the first release that fixes all audited CVEs.
+alibabacloud-dm20151123==1.8.1
+alibabacloud-captcha20230305>=1.1.4,<1.2
+alibabacloud-tea-openapi==0.3.16
 oss2>=2.19.1,<3
 pyyaml>=6.0.3,<6.1
 jinja2>=3.1.6,<3.2
 python-dateutil>=2.9.0.post0,<2.10
 httpx>=0.28.1,<0.29
 python-multipart>=0.0.20,<0.1
-pypdf>=5.9.0,<6.0
+pypdf>=6.15.0,<7
 pypdfium2>=4.30.0,<5.0
-Pillow>=11.3.0,<12.0
+Pillow>=12.3.0,<13
 rapidocr-onnxruntime>=1.4.4,<1.5

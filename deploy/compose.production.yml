@@ -1,0 +1,114 @@
+name: weiquan
+
+services:
+  app:
+    image: ${IMAGE_REF:-weiquan-agent:0.0.0-local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: weiquan-app
+    user: "10001:10001"
+    read_only: true
+    restart: unless-stopped
+    init: true
+    env_file:
+      - /etc/weiquan/weiquan.env
+    environment:
+      ATTACHMENT_TEMP_DIR: /app/.runtime/attachments
+      BACKUP_STAGING_DIR: /srv/weiquan/backup-staging
+      LOG_DIR: /srv/weiquan/logs
+      STATUTES_DB_PATH: /app/data/statutes.db
+    command:
+      - python
+      - -m
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --workers
+      - "1"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - type: bind
+        source: /srv/weiquan/attachments
+        target: /app/.runtime/attachments
+      - type: bind
+        source: /srv/weiquan/backup-staging
+        target: /srv/weiquan/backup-staging
+      - type: bind
+        source: /srv/weiquan/logs
+        target: /srv/weiquan/logs
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    shm_size: 256m
+    mem_limit: 1024m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8001/live', timeout=3).read()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - backend
+
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: weiquan-postgres
+    restart: unless-stopped
+    env_file:
+      - /etc/weiquan/weiquan.env
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+    volumes:
+      - type: volume
+        source: postgres_data
+        target: /var/lib/postgresql/data
+      - type: bind
+        source: ./postgres/postgresql.conf
+        target: /etc/postgresql/postgresql.conf
+        read_only: true
+    mem_limit: 512m
+    shm_size: 128m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: weiquan-postgres-data

@@ -1,0 +1,28 @@
+/srv/weiquan/logs/*.jsonl {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+
+/var/log/nginx/weiquan.access.log
+/var/log/nginx/weiquan.error.log
+/var/log/nginx/audio.access.log
+/var/log/nginx/audio.error.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    sharedscripts
+    create 0640 www-data adm
+    postrotate
+        if [ -s /run/nginx.pid ]; then
+            kill -USR1 "$(cat /run/nginx.pid)"
+        fi
+    endscript
+}

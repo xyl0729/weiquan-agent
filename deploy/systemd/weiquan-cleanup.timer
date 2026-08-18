@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly bounded retention cleanup for Weiquan
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=10min
+Persistent=true
+Unit=weiquan-cleanup.service
+
+[Install]
+WantedBy=timers.target

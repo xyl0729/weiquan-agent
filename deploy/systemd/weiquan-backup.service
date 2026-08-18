@@ -1,0 +1,19 @@
+[Unit]
+Description=Encrypted PostgreSQL backup for Weiquan
+Requires=docker.service
+After=docker.service weiquan-monitor.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/weiquan/current
+ExecStart=/usr/bin/flock -n /run/lock/weiquan-backup.lock /usr/bin/docker compose -f deploy/compose.production.yml exec -T app /app/deploy/backup/backup-postgres.sh
+TimeoutStartSec=2h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/lock
+
+[Install]
+WantedBy=multi-user.target
