@@ -2,7 +2,10 @@
 
 > 日期：2026-08-10
 > 依据：[中国大陆百人受控公测生产化设计](../specs/2026-08-10-mainland-public-beta-production-design.md)
-> 状态：设计已确认，实施计划待用户确认
+> 状态：代码侧实施与离线验收已完成，公网发布门槛待外部条件满足
+>
+> 实施说明：试用服务合并在 `app/trial/identity.py`；管理员审计迁移占用 `0005`，
+> 删除保留迁移顺延为 `0006`。
 
 ## 目标与边界
 
@@ -181,7 +184,7 @@ docker compose -f deploy/compose.test.yml up -d postgres-test
 - 邮箱经校验、去空白和大小写规范化后全局唯一；重复注册不重复占位。
 - 并发注册时第 101 个有效占位无法创建；未过期待验证、正常和停用账号占位，
   删除及超过 24 小时的待验证账号不占位。
-- 密码只允许 10 至 128 字符，使用 Argon2id 哈希并支持参数升级；明文不进入模型、
+- 密码只允许 8 至 128 字符，使用 Argon2id 哈希并支持参数升级；明文不进入模型、
   数据库或日志。
 - 邮箱验证和密码重置令牌随机强度至少 256 位、只存摘要、30 分钟过期、只能使用
   一次；重发使旧令牌失效。
@@ -264,7 +267,6 @@ docker compose -f deploy/compose.test.yml up -d postgres-test
 - 新增 `app/trial/__init__.py`
 - 新增 `app/trial/models.py`
 - 新增 `app/trial/identity.py`
-- 新增 `app/trial/service.py`
 - 新增 `app/security/network.py`
 - 新增 `app/limits/quota.py`
 - 新增 `app/limits/reservations.py`
@@ -287,12 +289,16 @@ docker compose -f deploy/compose.test.yml up -d postgres-test
 - 匿名身份只在首次 CAPTCHA 和隐私确认成功后创建；Cookie 随机、不可篡改、只存摘要，
   有效期固定为 365 天。
 - 只信任来自回环 Nginx 的代理地址头；公网客户端伪造 `X-Forwarded-For` 不生效。
-- 原始 IP 不入库；规范化 IP 通过独立密钥 HMAC，摘要 30 天后删除。
-- 同一 IP 摘要 30 天最多创建 3 个试用身份；删除 Cookie 后第 4 次不能重新领取。
+- 原始 IP 不入库；规范化 IP 通过独立密钥 HMAC。新领取身份只占用 15 分钟待使用
+  名额，首次有效咨询时原子激活为固定 30 天且不滑动续期。
+- 同一 IP 摘要最多同时存在 3 个待使用或已激活身份；过期待使用名额释放，旧 Cookie
+  重新激活时仍受上限约束。
 - 匿名前 5 次成功、第 6 次拒绝；全站北京时间同一天第 51 次拒绝。
 - 注册用户北京时间同一天前 10 次、同月前 50 次成功，跨午夜和跨月边界正确。
 - 匿名用量与注册用量完全分离；登录或注册不会迁移匿名历史或扣减注册额度。
 - 并发请求不会超发；预留、成功、退还都是幂等状态转换。
+- 并发激活不会让同一 IP 超过 3 个身份；待使用记录激活后固定保留 30 天，重复咨询
+  不延长到期时间。
 - Provider 最终失败、排队拒绝或进入 Provider 前失败会退还；成功后历史保存失败仍
   计入额度并返回“本次结果未保存”。
 - 超过 5 分钟的孤立预留可恢复并退还，不会退还已成功记录。
@@ -478,7 +484,7 @@ node --check app/web/js/app.js
 - 修改 `app/history/service.py`
 - 修改 `app/api/sessions.py`
 - 修改 `app/main.py`
-- 新增 `migrations/versions/20260810_0005_deletion_retention.py`
+- 新增 `migrations/versions/20260810_0006_deletion_retention.py`
 - 新增 `deploy/logrotate/weiquan`
 - 新增 `tests/test_safe_logging.py`
 - 新增 `tests/test_cleanup_jobs.py`

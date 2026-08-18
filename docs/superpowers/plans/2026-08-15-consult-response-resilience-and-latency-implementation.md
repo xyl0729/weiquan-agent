@@ -49,6 +49,8 @@
 **实施**
 
 - 新增 `LLM_TOTAL_TIMEOUT_SECONDS=30` 配置并由 Provider 工厂注入。
+- 在统一 DeepSeek 请求入口显式设置 `thinking.type=disabled`，避免受限 JSON
+  任务被模型长推理占满总预算。
 - 有执行器时向 `BoundedExecutor.run()` 传入总预算。
 - 无执行器时使用同等异步超时边界。
 - 将首次请求、网络重试、退避和结构化格式纠正包在同一次计时中。
@@ -66,7 +68,9 @@
 **文件**
 
 - 修改 `app/agent/pipeline.py`
+- 修改 `app/history/service.py`
 - 修改 `tests/test_pipeline.py`
+- 修改 `tests/test_history.py`
 - 修改 `tests/test_api.py`
 
 **实施**
@@ -75,18 +79,22 @@
   `ProviderError` 降级分支。
 - 将真实 Provider 错误类别写入降级审计。
 - 紧急风险继续优先使用本地紧急指导。
-- 正式 Playbook 依据已有事实询问首个缺失必填项；事实完整时询问要继续核对的
-  既有方案步骤或诉求。
+- 正式 Playbook 依据已有事实询问首个尚未问过的缺失必填项；均已问过时使用
+  更明确的类型化确认问题，事实完整时询问要继续核对的既有方案步骤或诉求。
 - 已有未核验主题优先保留历史主题，并使用 `GuidanceBuilder` 的主题问题。
 - 没有历史主题时才使用当前原文的本地主题识别，最后才使用通用澄清。
-- 降级轮次保留现有 session 状态，持久化后使用 `consume_quota=False` 退款。
+- 降级轮次保留既有公开 session 状态；首次降级时将 `collecting` 转换为本轮
+  `need_more_facts`，持久化后使用 `consume_quota=False` 退款。
+- 历史列表跳过 `collecting` 和 `error` 内部状态，单条详情和公开响应继续严格校验。
 
 **验证**
 
 - invalid output、timeout、network、busy、限流、拒绝和配置错误均返回安全回复。
+- 正式案件的降级追问不会原样重复上一条问题。
 - 正式案件、未核验主题、紧急风险和未知主题分别命中正确优先级。
 - 当前消息和最近历史仍进入正常 DeepSeek 调用，降级不切换已有案件主题。
 - 正常模型结果消费一次额度，所有降级结果退款。
+- 首次降级持久化后可被历史列表读取，已有内部状态记录不会导致整个列表返回错误。
 
 ## 4. 浏览器 35 秒等待保护
 

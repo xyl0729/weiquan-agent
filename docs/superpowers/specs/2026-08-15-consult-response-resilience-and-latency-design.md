@@ -88,6 +88,8 @@ DeepSeek 路径的回答质量。
 
 `DeepSeekProvider._run_provider_call()` 是统一预算边界：
 
+- 所有请求显式使用 `thinking.type=disabled`；咨询任务需要的是受限 JSON
+  抽取和短回答，不使用会占满总预算的长推理模式；
 - 有 `BoundedExecutor` 时，调用
   `run(..., total_timeout_seconds=30)`；
 - 无执行器的测试或独立使用场景，通过异步超时边界执行同一 operation；
@@ -129,7 +131,8 @@ Pipeline 在消息已规范化、Provider 已确定且会话已建立后，对
 
 1. 当前消息命中紧急风险时，返回现有本地紧急指导。
 2. 会话已绑定正式 Playbook 时，保留该 Playbook 和已确认事实，询问按 Playbook
-   顺序排列的首个缺失关键事实。
+   顺序排列且尚未问过的首个缺失关键事实；若缺失项均已问过，再使用更明确的
+   类型化确认问题，不原样重复上一条追问。
 3. 会话已有未核验主题时，保留历史主题，并使用 `GuidanceBuilder` 对应主题的
    `next_question`。
 4. 没有历史主题但当前原文可由本地路由明确识别时，使用该主题的针对性问题。
@@ -147,7 +150,13 @@ Pipeline 在消息已规范化、Provider 已确定且会话已建立后，对
 - 审计状态为 `degraded`，错误类别保留实际 Provider 类别；
 - `consume_quota=False`，预留额度转为 `refunded`；
 - 保留既有 `scenario_id`、facts、followup round 和主题历史；
+- 只有既有状态属于 `need_more_facts`、`ready` 或 `escalate` 时才保留；
+  新建会话的 `collecting` 或残留 `error` 必须转换为本轮公开结果状态；
 - 允许持久化降级问题，保证用户下一次追问仍能联系上下文。
+
+历史列表只投影 `need_more_facts`、`ready` 和 `escalate`。读取列表时跳过仍处于
+`collecting` 或 `error` 的内部记录，避免单条未完成记录拖垮整个历史接口；单条
+详情及公开记录的响应内容仍执行完整性校验。
 
 ### 4. 前端响应契约
 
