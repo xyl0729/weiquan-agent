@@ -1,0 +1,2 @@
+"""Recoverable consultation deletion workflow."""
+
