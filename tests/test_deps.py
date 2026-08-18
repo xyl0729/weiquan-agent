@@ -4,11 +4,17 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, HTTPException, Request
+from pydantic import SecretStr
 
 from app.attachments.store import AttachmentStore
 from app.config import Settings
 from app.db.session import SessionStore
+from app.db.postgres import PostgresApplicationStore
+from app.integrations.oss import InMemoryPrivateObjectStore
 from app.deps import (
+    _required_credential,
+    _required_secret,
+    build_deletion_service,
     get_attachment_service,
     get_attachment_store,
     get_session_store,
@@ -127,10 +133,11 @@ def test_server_credential_is_metered(mode: str) -> None:
 
 def test_attachment_dependencies_reuse_pipeline_store_and_cache(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     settings = make_settings(
         db_path=tmp_path / "app.db",
-        attachment_temp_dir=tmp_path / "attachment-jobs",
+        attachment_temp_dir=project_attachment_temp_dir,
     )
     sessions = SessionStore(
         settings.database_path,
@@ -158,10 +165,11 @@ def test_attachment_dependencies_reuse_pipeline_store_and_cache(
 
 def test_attachment_startup_dependencies_initialize_requested_database(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     settings = make_settings(
         db_path=tmp_path / "fresh.db",
-        attachment_temp_dir=tmp_path / "attachment-jobs",
+        attachment_temp_dir=project_attachment_temp_dir,
     )
     application = FastAPI()
     application.state.settings = settings
@@ -175,3 +183,72 @@ def test_attachment_startup_dependencies_initialize_requested_database(
     assert attachment_service.store is attachment_store
     assert settings.database_path.exists()
     assert application.state.session_store is attachment_store.sessions
+
+
+def test_production_store_reuses_shared_database_engine() -> None:
+    engine = object()
+    application = FastAPI()
+    application.state.settings = SimpleNamespace(
+        deployment_mode="production",
+        session_retention_days=30,
+        attachment_draft_ttl_seconds=3600,
+    )
+    application.state.database_engine = engine
+    request = Request({"type": "http", "app": application})
+
+    store = get_session_store(request)
+
+    assert isinstance(store, PostgresApplicationStore)
+    assert store.engine is engine
+    assert application.state.application_store is store
+    assert get_session_store(request) is store
+
+
+def test_deletion_service_accepts_short_nonempty_aliyun_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_object_store(
+        cls: object,
+        **credentials: str,
+    ) -> InMemoryPrivateObjectStore:
+        del cls
+        captured.update(credentials)
+        return InMemoryPrivateObjectStore()
+
+    monkeypatch.setattr(
+        "app.deps.AliyunPrivateObjectStore.from_credentials",
+        classmethod(fake_object_store),
+    )
+    settings = SimpleNamespace(
+        aliyun_access_key_id=SecretStr("short-access-id"),
+        aliyun_access_key_secret=SecretStr("short-access-secret"),
+        oss_endpoint="https://oss-cn-hangzhou.aliyuncs.com",
+        oss_bucket="private-backups",
+        deletion_manifest_recipient="age1testrecipient",
+    )
+
+    service = build_deletion_service(settings, object())
+
+    assert service is not None
+    assert captured["access_key_id"] == "short-access-id"
+    assert captured["access_key_secret"] == "short-access-secret"
+
+
+@pytest.mark.parametrize("value", [None, SecretStr("")])
+def test_required_credential_rejects_missing_or_empty_value(
+    value: object,
+) -> None:
+    with pytest.raises(ValueError, match="ALIYUN_ACCESS_KEY_ID 未配置"):
+        _required_credential(value, name="ALIYUN_ACCESS_KEY_ID")
+
+
+def test_required_internal_secret_keeps_minimum_length() -> None:
+    with pytest.raises(ValueError, match="SESSION_SECRET 未配置"):
+        _required_secret(SecretStr("s" * 31), name="SESSION_SECRET")
+
+    assert _required_secret(
+        SecretStr("s" * 32),
+        name="SESSION_SECRET",
+    ) == b"s" * 32

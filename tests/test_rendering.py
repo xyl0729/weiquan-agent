@@ -9,7 +9,9 @@ import yaml
 from app.agent.errors import ProviderError
 from app.jurisdiction.rules import JurisdictionRegistry, evaluate_jurisdiction
 from app.playbooks.evaluator import evaluate_playbook
+from app.playbooks.registry import PlaybookRegistry
 from app.playbooks.schema import Playbook
+from app.rendering.communication import build_communication_guide
 from app.rendering.models import LegalCitation, build_consultation_draft
 from app.rendering.renderer import PlanRenderer
 from app.retrieval.database import (
@@ -68,6 +70,24 @@ def _draft():
         _statutes(playbook),
         outcome,
     )
+
+
+def _required_facts(playbook: Playbook) -> dict[str, object]:
+    facts: dict[str, object] = {}
+    for slot in playbook.slots.required:
+        if slot.type == "enum":
+            facts[slot.name] = (slot.values or [])[0]
+        elif slot.type == "number":
+            facts[slot.name] = 1000
+        elif slot.type == "integer":
+            facts[slot.name] = 1
+        elif slot.type == "boolean":
+            facts[slot.name] = False
+        elif slot.type == "date":
+            facts[slot.name] = "2026-08-08"
+        else:
+            facts[slot.name] = "已确认事实"
+    return facts
 
 
 def test_citation_can_only_be_converted_from_statute_record() -> None:
@@ -137,10 +157,50 @@ def test_builder_ignores_statutes_outside_playbook_legal_basis() -> None:
     ]
 
 
+def test_all_formal_playbooks_build_complete_communication_guides() -> None:
+    registry = PlaybookRegistry.from_directory(
+        PROJECT_ROOT / "app" / "playbooks"
+    )
+
+    for playbook in registry.playbooks:
+        evaluation = evaluate_playbook(
+            playbook,
+            _required_facts(playbook),
+        )
+
+        guide = build_communication_guide(playbook, evaluation)
+
+        assert guide == build_communication_guide(playbook, evaluation)
+        assert guide.recipient != "对方"
+        assert guide.channels
+        assert guide.when_to_send
+        assert guide.objective
+        assert playbook.name in guide.message
+        assert evaluation.verdict_label in guide.message
+        assert guide.after_sending
+        assert guide.escalation
+        assert guide.required_before_send == []
+
+
+def test_draft_keeps_legacy_communication_text_in_sync() -> None:
+    draft = _draft()
+
+    assert (
+        draft.plan.communication_text
+        == draft.plan.communication_guide.message
+    )
+
+
 def test_fixed_templates_render_evidence_first_and_escape_input() -> None:
     draft = _draft()
+    injected_guide = draft.plan.communication_guide.model_copy(
+        update={"message": "<script>alert(1)</script>"}
+    )
     injected = draft.plan.model_copy(
-        update={"communication_text": "<script>alert(1)</script>"}
+        update={
+            "communication_text": "<script>alert(1)</script>",
+            "communication_guide": injected_guide,
+        }
     )
     draft = draft.model_copy(update={"plan": injected})
     renderer = PlanRenderer(
@@ -156,6 +216,12 @@ def test_fixed_templates_render_evidence_first_and_escape_input() -> None:
     assert "<script>" not in documents.plan_text
     assert "&lt;script&gt;" in documents.plan_text
     assert "住房租赁条例第十条" in documents.plan_text
+    assert "【沟通指南】" in documents.plan_text
+    assert "收件对象：" in documents.plan_text
+    assert "建议渠道：" in documents.plan_text
+    assert "发送时机：" in documents.plan_text
+    assert "【发送后动作】" in documents.plan_text
+    assert "【升级动作】" in documents.plan_text
     assert documents.evidence_request_text.startswith(
         "主题：关于租房押金扣减"
     )
@@ -195,3 +261,52 @@ def test_polishing_failure_falls_back_to_locked_template_text() -> None:
 
     assert rendered.polish_applied is False
     assert rendered.plan_text == original.plan_text
+
+
+def test_polishing_updates_both_communication_message_fields_only() -> None:
+    class SuccessfulProvider:
+        name = "successful"
+        model = "successful"
+
+        async def extract_facts(self, message, context):  # pragma: no cover
+            raise AssertionError
+
+        async def polish_text(self, draft):
+            return "这是润色后且可直接发送的正文。"
+
+    class CapturingRenderer(PlanRenderer):
+        captured = None
+
+        def render(self, draft, **kwargs):
+            self.captured = draft
+            return super().render(draft, **kwargs)
+
+    draft = _draft()
+    renderer = CapturingRenderer(
+        PROJECT_ROOT / "app" / "rendering" / "templates"
+    )
+
+    rendered = asyncio.run(
+        renderer.render_with_optional_polish(
+            draft,
+            provider=SuccessfulProvider(),
+        )
+    )
+
+    assert rendered.polish_applied is True
+    assert renderer.captured is not None
+    polished_plan = renderer.captured.plan
+    assert polished_plan.communication_text == "这是润色后且可直接发送的正文。"
+    assert (
+        polished_plan.communication_guide.message
+        == polished_plan.communication_text
+    )
+    assert (
+        polished_plan.communication_guide.model_dump(exclude={"message"})
+        == draft.plan.communication_guide.model_dump(exclude={"message"})
+    )
+    assert polished_plan.model_dump(
+        exclude={"communication_text", "communication_guide"}
+    ) == draft.plan.model_dump(
+        exclude={"communication_text", "communication_guide"}
+    )

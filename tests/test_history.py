@@ -11,6 +11,7 @@ from app.agent.errors import DataIntegrityError
 from app.api.schemas import ConsultResponse
 from app.attachments.models import ExtractionBlock, ExtractionResult
 from app.attachments.store import AttachmentStore
+from app.db.contracts import LOCAL_DEVELOPMENT_OWNER_ID
 from app.db.session import SessionStore
 from app.history.service import SessionHistoryService, history_title
 from app.playbooks.registry import PlaybookRegistry
@@ -219,6 +220,42 @@ def test_history_title_normalizes_whitespace_and_unicode() -> None:
     assert history_title(source) == f"{source[:24]}…"
 
 
+def test_history_uses_recoverable_deletion_when_configured(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "app.db")
+    store.initialize()
+    session = store.create_session()
+
+    class RecordingDeletionService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def delete_session(
+            self,
+            session_id: str,
+            *,
+            owner_id: str,
+        ) -> bool:
+            self.calls.append((session_id, owner_id))
+            return True
+
+    deletion = RecordingDeletionService()
+    SessionHistoryService(
+        store,
+        _registry(),
+        deletion_service=deletion,
+    ).delete_session(
+        session.id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+    )
+
+    assert deletion.calls == [
+        (session.id, LOCAL_DEVELOPMENT_OWNER_ID)
+    ]
+    assert store.get_session(session.id) is not None
+
+
 def test_history_service_lists_and_restores_public_turns(
     tmp_path: Path,
 ) -> None:
@@ -242,8 +279,11 @@ def test_history_service_lists_and_restores_public_turns(
     )
     service = SessionHistoryService(store, _registry())
 
-    listed = service.list_sessions()
-    detail = service.get_session(session.id)
+    listed = service.list_sessions(owner_id=LOCAL_DEVELOPMENT_OWNER_ID)
+    detail = service.get_session(
+        session.id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+    )
 
     assert listed[0].title == "房东扣了押金"
     assert listed[0].scenario_id == "deposit_deduction"
@@ -253,6 +293,50 @@ def test_history_service_lists_and_restores_public_turns(
     assert detail.turns[0].response.attachments == []
     assert not hasattr(detail.session, "facts")
     assert store.list_turns(session.id)[0].response == stored_response
+
+
+def test_history_list_skips_sessions_with_internal_statuses(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "app.db")
+    store.initialize()
+
+    for status in ("collecting", "error"):
+        session = store.create_session()
+        turn_id = str(uuid4())
+        store.update_session(session.id, status=status)
+        store.add_turn(
+            session.id,
+            turn_id=turn_id,
+            user_message=f"{status} session",
+            facts={},
+            rule_matches=[],
+            response=_public_response(session.id, turn_id),
+        )
+
+    public_session = store.create_session()
+    public_turn_id = str(uuid4())
+    store.update_session(
+        public_session.id,
+        status="need_more_facts",
+    )
+    store.add_turn(
+        public_session.id,
+        turn_id=public_turn_id,
+        user_message="正常历史",
+        facts={},
+        rule_matches=[],
+        response=_public_response(public_session.id, public_turn_id),
+    )
+
+    listed = SessionHistoryService(
+        store,
+        _registry(),
+    ).list_sessions(owner_id=LOCAL_DEVELOPMENT_OWNER_ID)
+
+    assert [session.session_id for session in listed] == [
+        public_session.id
+    ]
 
 
 def test_history_uses_relational_attachments_per_turn_in_request_order(
@@ -333,7 +417,8 @@ def test_history_uses_relational_attachments_per_turn_in_request_order(
     )
 
     detail = SessionHistoryService(store, _registry()).get_session(
-        session.id
+        session.id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
     )
 
     restored = [
@@ -395,9 +480,75 @@ def test_history_restores_new_response_without_changes(
     detail = SessionHistoryService(
         store,
         pipeline.registry,
-    ).get_session(result.session_id)
+    ).get_session(
+        result.session_id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+    )
 
     assert detail.turns[0].response == expected
+    restored_plan = detail.turns[0].response.plan
+    assert restored_plan is not None
+    assert restored_plan.communication_guide is not None
+    assert (
+        restored_plan.communication_text
+        == restored_plan.communication_guide.message
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_turn_kind", "expected_citation_refs"),
+    [
+        (
+            "医院不肯给我病历，医疗收费涉及300元也说不清",
+            "unverified_guidance",
+            (
+                "民法典.第一千二百二十五条",
+                "民法典.第一千二百二十二条",
+            ),
+        ),
+        (
+            "孩子正在被打，未成年人正在受伤害",
+            "emergency_guidance",
+            (),
+        ),
+    ],
+)
+def test_history_restores_guidance_without_formal_projection_or_rewrite(
+    tmp_path: Path,
+    message: str,
+    expected_turn_kind: str,
+    expected_citation_refs: tuple[str, ...],
+) -> None:
+    pipeline, store = make_pipeline(tmp_path)
+    result = run(pipeline.consult(message=message))
+    stored_response = deepcopy(
+        store.list_turns(result.session_id)[0].response
+    )
+    expected = ConsultResponse.model_validate(result.public_payload())
+
+    restored = SessionHistoryService(
+        store,
+        pipeline.registry,
+    ).get_session(
+        result.session_id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+    ).turns[0].response
+
+    assert restored == expected
+    assert restored.turn_kind == expected_turn_kind
+    assert restored.coverage is not None
+    assert restored.guidance is not None
+    assert restored.plan is None
+    assert restored.verdict is None
+    assert [citation.ref for citation in restored.citations] == list(
+        expected_citation_refs
+    )
+    assert all(
+        citation.basis_scope == "general"
+        and citation.applicability_notice
+        for citation in restored.citations
+    )
+    assert store.list_turns(result.session_id)[0].response == stored_response
 
 
 def test_history_projects_all_legacy_turn_kinds_in_order(
@@ -462,7 +613,8 @@ def test_history_projects_all_legacy_turn_kinds_in_order(
         )
 
     detail = SessionHistoryService(store, _registry()).get_session(
-        session.id
+        session.id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
     )
 
     assert [
@@ -474,11 +626,91 @@ def test_history_projects_all_legacy_turn_kinds_in_order(
         "followup_answer",
     ]
     repeated = detail.turns[-1].response
+    legacy_plan = detail.turns[1].response.plan
+    assert legacy_plan is not None
+    assert legacy_plan.communication_guide is None
+    assert detail.turns[2].response.reply is None
     assert repeated.reply is not None
     assert repeated.reply.text == LEGACY_REPEAT_REPLY
     assert repeated.plan is None
     assert repeated.verdict is None
     assert repeated.citations == []
+
+
+def test_history_preserves_explicit_plan_update_reply_and_full_plan(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "app.db")
+    store.initialize()
+    session = store.create_session()
+    store.update_session(
+        session.id,
+        scenario_id="return_refused",
+        status="ready",
+    )
+    initial_turn_id = str(uuid4())
+    update_turn_id = str(uuid4())
+    initial_response = _plan_response(
+        session.id,
+        initial_turn_id,
+        summary="第一份方案",
+    )
+    initial_response.update(
+        {
+            "turn_kind": "initial_plan",
+            "reply": None,
+        }
+    )
+    update_response = _plan_response(
+        session.id,
+        update_turn_id,
+        summary="金额变化后的完整方案",
+    )
+    update_response.update(
+        {
+            "turn_kind": "plan_update",
+            "reply": {
+                "text": "商品金额更正后，处理顺序已经更新。",
+                "suggested_actions": ["先补充保存更正后的订单金额"],
+                "citation_refs": [],
+                "new_case": None,
+            },
+        }
+    )
+    stored_update = deepcopy(update_response)
+    for turn_id, message, response in (
+        (initial_turn_id, "商品有质量问题", initial_response),
+        (update_turn_id, "商品金额更正为1200元", update_response),
+    ):
+        store.add_turn(
+            session.id,
+            turn_id=turn_id,
+            user_message=message,
+            facts={},
+            rule_matches=[],
+            response=response,
+        )
+
+    restored = SessionHistoryService(
+        store,
+        _registry(),
+    ).get_session(
+        session.id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+    ).turns[1].response
+
+    assert restored.turn_kind == "plan_update"
+    assert restored.reply is not None
+    assert (
+        restored.reply.text
+        == "商品金额更正后，处理顺序已经更新。"
+    )
+    assert restored.reply.suggested_actions == [
+        "先补充保存更正后的订单金额"
+    ]
+    assert restored.plan is not None
+    assert restored.plan.summary == "金额变化后的完整方案"
+    assert store.list_turns(session.id)[1].response == stored_update
 
 
 def test_history_filters_legacy_citations_without_rewriting_storage(
@@ -520,7 +752,8 @@ def test_history_filters_legacy_citations_without_rewriting_storage(
     )
 
     detail = SessionHistoryService(store, _registry()).get_session(
-        session.id
+        session.id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
     )
 
     response = detail.turns[0].response
@@ -587,7 +820,10 @@ def test_history_filters_explicit_reply_citations_consistently(
     restored = SessionHistoryService(
         store,
         _registry(),
-    ).get_session(session.id).turns[0].response
+    ).get_session(
+        session.id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+    ).turns[0].response
 
     assert restored.reply is not None
     assert restored.reply.citation_refs == [
@@ -596,6 +832,53 @@ def test_history_filters_explicit_reply_citations_consistently(
     assert [item.ref for item in restored.citations] == [
         "消费者权益保护法.第二十四条"
     ]
+    assert store.list_turns(session.id)[0].response == original
+
+
+def test_history_restores_legacy_general_basis_scope_without_rewriting(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "app.db")
+    store.initialize()
+    session = store.create_session()
+    store.update_session(session.id, status="need_more_facts")
+    turn_id = str(uuid4())
+    response = _public_response(session.id, turn_id)
+    citation = _citation(
+        "民法典.第五百七十七条",
+        law_name="中华人民共和国民法典",
+        article_no="第五百七十七条",
+    )
+    response.update(
+        {
+            "turn_kind": "followup_answer",
+            "reply": {
+                "text": "服务没有按约履行时，先固定订单和沟通记录。",
+                "suggested_actions": [],
+                "citation_refs": ["民法典.第五百七十七条"],
+                "new_case": None,
+            },
+            "questions": [],
+            "citations": [citation],
+        }
+    )
+    original = deepcopy(response)
+    store.add_turn(
+        session.id,
+        turn_id=turn_id,
+        user_message="会员服务一直没有履行",
+        facts={},
+        rule_matches=[],
+        response=response,
+    )
+
+    restored = SessionHistoryService(store, _registry()).get_session(
+        session.id,
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+    ).turns[0].response
+
+    assert len(restored.citations) == 1
+    assert restored.citations[0].basis_scope == "general"
     assert store.list_turns(session.id)[0].response == original
 
 
@@ -624,7 +907,10 @@ def test_history_service_revalidates_stored_public_response(
         DataIntegrityError,
         match="历史咨询数据未通过完整性检查",
     ):
-        SessionHistoryService(store, _registry()).get_session(session.id)
+        SessionHistoryService(store, _registry()).get_session(
+            session.id,
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+        )
 
 
 @pytest.mark.parametrize(
@@ -651,7 +937,10 @@ def test_history_rejects_corrupt_attachment_json_without_leaking_text(
         SessionHistoryService(
             SessionStore(path),
             _registry(),
-        ).get_session(session_id)
+        ).get_session(
+            session_id,
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+        )
 
     assert caught.value.code == "session_data_invalid"
     assert caught.value.safe_message == "历史咨询数据未通过完整性检查"
@@ -677,7 +966,10 @@ def test_history_rejects_illegal_bound_status_safely(
         )
 
     with pytest.raises(DataIntegrityError) as caught:
-        SessionHistoryService(store, _registry()).get_session(session_id)
+        SessionHistoryService(store, _registry()).get_session(
+            session_id,
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+        )
 
     assert caught.value.code == "session_data_invalid"
     assert "OCR-SENSITIVE-正文" not in caught.value.safe_message
@@ -720,7 +1012,10 @@ def test_history_rejects_cross_session_attachment_relationship(
             SessionHistoryService(
                 store,
                 _registry(),
-            ).get_session(requested_session)
+            ).get_session(
+                requested_session,
+                owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
+            )
         assert caught.value.code == "session_data_invalid"
         assert "OCR-SENSITIVE-正文" not in caught.value.safe_message
 

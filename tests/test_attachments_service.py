@@ -4,7 +4,8 @@ import asyncio
 import hashlib
 import json
 import logging
-import sqlite3
+import os
+import stat
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ import pytest
 from app.attachments.errors import (
     AttachmentInputError,
     AttachmentResourceLimitError,
+    AttachmentServiceUnavailableError,
 )
 from app.attachments.models import ExtractionBlock, ExtractionResult
 from app.attachments.service import (
@@ -94,6 +96,64 @@ class FakeWorker:
         return self.result
 
 
+class BlocksStrippingStore:
+    """Approximate the PostgreSQL adapter, which never stores OCR blocks."""
+
+    def __init__(self, delegate: AttachmentStore) -> None:
+        self.delegate = delegate
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.delegate, name)
+
+    def save_extraction(
+        self,
+        attachment_id: str,
+        result: ExtractionResult,
+        *,
+        owner_id: str,
+    ) -> object:
+        record = self.delegate.save_extraction(
+            attachment_id,
+            result,
+            owner_id=owner_id,
+        )
+        return record.model_copy(update={"extracted_blocks": ()})
+
+    def get(self, attachment_id: str, *, owner_id: str) -> object:
+        record = self.delegate.get(attachment_id, owner_id=owner_id)
+        return record.model_copy(update={"extracted_blocks": ()})
+
+    def get_optional(
+        self,
+        attachment_id: str,
+        *,
+        owner_id: str,
+        now: object | None = None,
+    ) -> object:
+        record = self.delegate.get_optional(
+            attachment_id,
+            owner_id=owner_id,
+            now=now,
+        )
+        if record is None:
+            return None
+        return record.model_copy(update={"extracted_blocks": ()})
+
+    def confirm(
+        self,
+        attachment_id: str,
+        confirmed_text: str,
+        *,
+        owner_id: str,
+    ) -> object:
+        record = self.delegate.confirm(
+            attachment_id,
+            confirmed_text,
+            owner_id=owner_id,
+        )
+        return record.model_copy(update={"extracted_blocks": ()})
+
+
 class BlockingWorker:
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -165,13 +225,14 @@ def _stores(
 
 def _service(
     tmp_path: Path,
+    attachment_temp_dir: Path,
     *,
     worker: object | None = None,
     max_file_bytes: int = 10 * 1024 * 1024,
     extraction_timeout_seconds: float = 5,
 ) -> tuple[AttachmentService, SessionStore, AttachmentStore, Path]:
     sessions, store = _stores(tmp_path)
-    temp_dir = tmp_path / "attachments"
+    temp_dir = attachment_temp_dir
     service = AttachmentService(
         store,
         temp_dir=temp_dir,
@@ -225,7 +286,21 @@ async def _chunks(
 def _managed_files(path: Path) -> list[Path]:
     if not path.exists():
         return []
-    return sorted(item for item in path.iterdir() if item.is_file())
+    return sorted(
+        item
+        for item in path.iterdir()
+        if item.is_file() and not item.name.endswith(".ocr.json")
+    )
+
+
+def _sidecar_files(path: Path) -> list[Path]:
+    if not path.exists():
+        return []
+    return sorted(
+        item
+        for item in path.iterdir()
+        if item.is_file() and item.name.endswith(".ocr.json")
+    )
 
 
 def _attachment_counts(sessions: SessionStore) -> dict[str, int]:
@@ -242,10 +317,15 @@ def _attachment_counts(sessions: SessionStore) -> dict[str, int]:
 
 def test_streamed_upload_uses_random_path_and_persists_exact_metadata(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     content = b"%PDF-1.7\nstreamed fixture bytes"
     worker = FakeWorker()
-    service, _, store, temp_dir = _service(tmp_path, worker=worker)
+    service, _, store, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
     body = _multipart(
         _part(
             name="file",
@@ -275,14 +355,103 @@ def test_streamed_upload_uses_random_path_and_persists_exact_metadata(
     assert call["job_path"].parent == temp_dir.resolve()
     assert call["result_path"].parent == temp_dir.resolve()
     assert _managed_files(temp_dir) == []
+    sidecars = _sidecar_files(temp_dir)
+    assert len(sidecars) == 1
+    if os.name != "nt":
+        assert stat.S_IMODE(sidecars[0].stat().st_mode) == 0o600
+    sidecar_text = sidecars[0].read_text(encoding="utf-8")
+    assert record.id in sidecar_text
+    assert record.original_name not in sidecar_text
+
+    confirmed = service.confirm(record.id, "订单金额 399 元")
+
+    assert confirmed.status == "confirmed"
+    assert confirmed.confirmed_text == "订单金额 399 元"
+    assert _sidecar_files(temp_dir) == []
+
+
+def test_sidecar_hydrates_postgres_style_upload_and_confirm_response(
+    tmp_path: Path,
+    project_attachment_temp_dir: Path,
+) -> None:
+    sessions, sqlite_store = _stores(tmp_path)
+    del sessions
+    store = BlocksStrippingStore(sqlite_store)
+    service = AttachmentService(
+        store,  # type: ignore[arg-type]
+        temp_dir=project_attachment_temp_dir,
+        max_file_bytes=10 * 1024 * 1024,
+        max_pdf_pages=20,
+        max_image_pixels=25_000_000,
+        max_extracted_chars=200_000,
+        low_confidence_threshold=0.75,
+        extraction_timeout_seconds=5,
+        worker=FakeWorker(),
+    )
+    body = _multipart(
+        _part(
+            name="file",
+            filename="draft.pdf",
+            media_type="application/pdf",
+            data=b"%PDF-sidecar-hydration",
+        )
+    )
+
+    uploaded = asyncio.run(
+        service.process_multipart(CONTENT_TYPE, _chunks(body))
+    )
+    confirmed = service.confirm(uploaded.id, "订单金额 399 元")
+
+    assert uploaded.extracted_blocks
+    assert confirmed.extracted_blocks == uploaded.extracted_blocks
+    assert confirmed.confirmed_text == "订单金额 399 元"
+    assert _sidecar_files(project_attachment_temp_dir) == []
+
+
+def test_missing_sidecar_does_not_confirm_postgres_style_record(
+    tmp_path: Path,
+    project_attachment_temp_dir: Path,
+) -> None:
+    _, sqlite_store = _stores(tmp_path)
+    store = BlocksStrippingStore(sqlite_store)
+    service = AttachmentService(
+        store,  # type: ignore[arg-type]
+        temp_dir=project_attachment_temp_dir,
+        max_file_bytes=10 * 1024 * 1024,
+        max_pdf_pages=20,
+        max_image_pixels=25_000_000,
+        max_extracted_chars=200_000,
+        low_confidence_threshold=0.75,
+        extraction_timeout_seconds=5,
+        worker=FakeWorker(),
+    )
+    body = _multipart(
+        _part(
+            name="file",
+            filename="draft.pdf",
+            media_type="application/pdf",
+            data=b"%PDF-missing-sidecar",
+        )
+    )
+    uploaded = asyncio.run(
+        service.process_multipart(CONTENT_TYPE, _chunks(body))
+    )
+    service.drafts.delete(uploaded.id)
+
+    with pytest.raises(AttachmentServiceUnavailableError):
+        service.confirm(uploaded.id, "不能写入")
+
+    assert sqlite_store.get(uploaded.id).status == "review_required"
 
 
 def test_byte_limit_stops_consuming_and_removes_partial_file(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     worker = FakeWorker()
     service, sessions, _, temp_dir = _service(
         tmp_path,
+        project_attachment_temp_dir,
         worker=worker,
         max_file_bytes=32,
     )
@@ -365,10 +534,15 @@ def test_byte_limit_stops_consuming_and_removes_partial_file(
 )
 def test_rejects_noncanonical_or_malformed_multipart(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
     body: bytes,
 ) -> None:
     worker = FakeWorker()
-    service, sessions, _, temp_dir = _service(tmp_path, worker=worker)
+    service, sessions, _, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
 
     with pytest.raises(AttachmentInputError):
         asyncio.run(
@@ -391,10 +565,12 @@ def test_rejects_noncanonical_or_malformed_multipart(
 )
 def test_rejects_missing_or_invalid_multipart_content_type(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
     content_type: str | None,
 ) -> None:
     service, sessions, _, temp_dir = _service(
         tmp_path,
+        project_attachment_temp_dir,
         worker=FakeWorker(),
     )
 
@@ -409,9 +585,11 @@ def test_rejects_missing_or_invalid_multipart_content_type(
 
 def test_declared_type_mismatch_is_rejected_before_database_write(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     service, sessions, _, temp_dir = _service(
         tmp_path,
+        project_attachment_temp_dir,
         worker=FakeWorker(),
     )
     body = _multipart(
@@ -435,11 +613,16 @@ def test_declared_type_mismatch_is_rejected_before_database_write(
 
 def test_worker_safe_error_becomes_failed_record_and_cleans_all_files(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     worker = FakeWorker(
         error=AttachmentInputError("attachment_corrupt")
     )
-    service, _, store, temp_dir = _service(tmp_path, worker=worker)
+    service, _, store, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
     body = _multipart(
         _part(
             name="file",
@@ -461,9 +644,14 @@ def test_worker_safe_error_becomes_failed_record_and_cleans_all_files(
 
 def test_worker_media_type_mismatch_becomes_failed_record(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     worker = FakeWorker(result=_result(media_type="image/png"))
-    service, _, store, temp_dir = _service(tmp_path, worker=worker)
+    service, _, store, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
     body = _multipart(
         _part(
             name="file",
@@ -485,10 +673,12 @@ def test_worker_media_type_mismatch_becomes_failed_record(
 
 def test_database_failure_still_cleans_source_job_and_result(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service, _, store, temp_dir = _service(
         tmp_path,
+        project_attachment_temp_dir,
         worker=FakeWorker(),
     )
     body = _multipart(
@@ -502,20 +692,25 @@ def test_database_failure_still_cleans_source_job_and_result(
 
     def fail_save(*args: object, **kwargs: object) -> object:
         del args, kwargs
-        raise sqlite3.OperationalError("injected database failure")
+        raise RuntimeError("injected database secret detail")
 
     monkeypatch.setattr(store, "save_extraction", fail_save)
 
-    with pytest.raises(sqlite3.OperationalError, match="injected"):
+    with pytest.raises(AttachmentServiceUnavailableError) as caught:
         asyncio.run(
             service.process_multipart(CONTENT_TYPE, _chunks(body))
         )
 
+    assert caught.value.code == "attachment_service_unavailable"
+    assert "injected" not in str(caught.value)
+    assert "secret" not in str(caught.value).casefold()
     assert _managed_files(temp_dir) == []
+    assert _sidecar_files(temp_dir) == []
 
 
 def test_sensitive_upload_details_are_not_logged(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -525,7 +720,11 @@ def test_sensitive_upload_details_are_not_logged(
     key_marker = "private-key-marker"
     monkeypatch.setenv("DEEPSEEK_API_KEY", key_marker)
     worker = FakeWorker(error=RuntimeError(prompt_marker))
-    service, _, _, temp_dir = _service(tmp_path, worker=worker)
+    service, _, _, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
     body = _multipart(
         _part(
             name="file",
@@ -557,9 +756,14 @@ def test_sensitive_upload_details_are_not_logged(
 
 def test_parent_cancellation_marks_processing_failed_and_cleans_files(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     worker = BlockingWorker()
-    service, sessions, _, temp_dir = _service(tmp_path, worker=worker)
+    service, sessions, _, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
     body = _multipart(
         _part(
             name="file",
@@ -586,6 +790,7 @@ def test_parent_cancellation_marks_processing_failed_and_cleans_files(
 
 def test_timeout_terminates_then_kills_stubborn_worker(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     process = StubbornProcess()
 
@@ -601,7 +806,11 @@ def test_timeout_terminates_then_kills_stubborn_worker(
         termination_grace_seconds=0.01,
         process_factory=process_factory,
     )
-    service, _, _, temp_dir = _service(tmp_path, worker=worker)
+    service, _, _, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
     body = _multipart(
         _part(
             name="file",
@@ -624,6 +833,7 @@ def test_timeout_terminates_then_kills_stubborn_worker(
 
 def test_invalid_worker_output_fails_closed_and_is_removed(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     async def process_factory(
         *args: object,
@@ -640,7 +850,11 @@ def test_invalid_worker_output_fails_closed_and_is_removed(
         timeout_seconds=1,
         process_factory=process_factory,
     )
-    service, _, _, temp_dir = _service(tmp_path, worker=worker)
+    service, _, _, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
     body = _multipart(
         _part(
             name="file",
@@ -661,6 +875,7 @@ def test_invalid_worker_output_fails_closed_and_is_removed(
 
 def test_worker_process_receives_only_allowlisted_environment(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured_environment: dict[str, str] = {}
@@ -689,7 +904,11 @@ def test_worker_process_receives_only_allowlisted_environment(
         timeout_seconds=1,
         process_factory=process_factory,
     )
-    service, _, _, temp_dir = _service(tmp_path, worker=worker)
+    service, _, _, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
     body = _multipart(
         _part(
             name="file",
@@ -715,9 +934,11 @@ def test_worker_process_receives_only_allowlisted_environment(
 
 def test_default_worker_runs_selectable_pdf_in_real_subprocess(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     service, _, _, temp_dir = _service(
         tmp_path,
+        project_attachment_temp_dir,
         extraction_timeout_seconds=15,
     )
     content = (FIXTURES / "selectable.pdf").read_bytes()
@@ -746,9 +967,11 @@ def test_default_worker_runs_selectable_pdf_in_real_subprocess(
 
 def test_default_worker_loads_local_ocr_in_real_subprocess(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     service, _, _, temp_dir = _service(
         tmp_path,
+        project_attachment_temp_dir,
         extraction_timeout_seconds=30,
     )
     content = (FIXTURES / "numeric.png").read_bytes()
@@ -785,9 +1008,11 @@ def test_default_worker_loads_local_ocr_in_real_subprocess(
 
 def test_recovery_fails_stale_processing_and_only_removes_managed_orphans(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     service, _, store, temp_dir = _service(
         tmp_path,
+        project_attachment_temp_dir,
         worker=FakeWorker(),
     )
     stale = store.create_processing(
@@ -821,3 +1046,43 @@ def test_recovery_fails_stale_processing_and_only_removes_managed_orphans(
     assert sorted(path.name for path in _managed_files(temp_dir)) == [
         "keep-me.txt"
     ]
+
+
+def test_delete_and_startup_recovery_remove_unconfirmed_sidecars(
+    tmp_path: Path,
+    project_attachment_temp_dir: Path,
+) -> None:
+    service, _, store, temp_dir = _service(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=FakeWorker(),
+    )
+    body = _multipart(
+        _part(
+            name="file",
+            filename="draft.pdf",
+            media_type="application/pdf",
+            data=b"%PDF-draft",
+        )
+    )
+    first = asyncio.run(
+        service.process_multipart(CONTENT_TYPE, _chunks(body))
+    )
+    assert len(_sidecar_files(temp_dir)) == 1
+
+    service.delete(first.id)
+
+    assert store.get_optional(first.id) is None
+    assert _sidecar_files(temp_dir) == []
+
+    second = asyncio.run(
+        service.process_multipart(CONTENT_TYPE, _chunks(body))
+    )
+    assert len(_sidecar_files(temp_dir)) == 1
+
+    recovered, removed = service.recover()
+
+    assert recovered == 1
+    assert removed == 1
+    assert store.get(second.id).status == "failed"
+    assert _sidecar_files(temp_dir) == []

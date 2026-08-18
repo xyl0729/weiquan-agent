@@ -14,6 +14,7 @@ from app.attachments.errors import (
 )
 from app.attachments.models import ExtractionBlock, ExtractionResult
 from app.attachments.store import AttachmentStore
+from app.db.contracts import LOCAL_DEVELOPMENT_OWNER_ID
 from app.db.session import SessionStore
 
 
@@ -80,6 +81,7 @@ def test_builder_preserves_request_order_and_exposes_only_confirmed_fields(
 
     evidence = EvidenceContextBuilder(store).build(
         [second.id, first.id],
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
         reservation_id=reservation_id,
     )
 
@@ -119,6 +121,7 @@ def test_builder_accepts_exact_character_limit_and_never_truncates(
 
     evidence = builder.build(
         [first.id, second.id],
+        owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
         reservation_id=reservation_id,
     )
 
@@ -133,6 +136,7 @@ def test_builder_accepts_exact_character_limit_and_never_truncates(
     with pytest.raises(AttachmentResourceLimitError) as exc_info:
         builder.build(
             [first.id, second.id, third.id],
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
             reservation_id=oversized_reservation,
         )
 
@@ -150,12 +154,14 @@ def test_builder_rejects_duplicate_and_excess_attachment_ids(
     with pytest.raises(ValueError, match="重复"):
         builder.build(
             [records[0].id, records[0].id],
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
             reservation_id=reservation_id,
         )
 
     with pytest.raises(AttachmentResourceLimitError) as exc_info:
         builder.build(
             [record.id for record in records],
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
             reservation_id=reservation_id,
         )
 
@@ -172,6 +178,7 @@ def test_builder_rejects_missing_unconfirmed_and_failed_attachments(
     with pytest.raises(AttachmentNotFoundError):
         builder.build(
             [str(uuid4())],
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
             reservation_id=reservation_id,
         )
 
@@ -209,6 +216,7 @@ def test_builder_rejects_missing_unconfirmed_and_failed_attachments(
         with pytest.raises(AttachmentStateConflictError) as exc_info:
             builder.build(
                 [attachment_id],
+                owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
                 reservation_id=reservation_id,
             )
         assert exc_info.value.code == "attachment_not_confirmed"
@@ -225,6 +233,7 @@ def test_builder_requires_the_current_reservation_and_rejects_bound_records(
     with pytest.raises(AttachmentStateConflictError) as exc_info:
         builder.build(
             [record.id],
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
             reservation_id=str(uuid4()),
         )
     assert exc_info.value.code == "attachment_already_bound"
@@ -247,6 +256,7 @@ def test_builder_requires_the_current_reservation_and_rejects_bound_records(
     with pytest.raises(AttachmentStateConflictError) as exc_info:
         builder.build(
             [record.id],
+            owner_id=LOCAL_DEVELOPMENT_OWNER_ID,
             reservation_id=reservation_id,
         )
     assert exc_info.value.code == "attachment_already_bound"

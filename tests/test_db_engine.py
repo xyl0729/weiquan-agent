@@ -72,12 +72,12 @@ def test_future_database_revision_is_rejected() -> None:
     with pytest.raises(MigrationVersionError):
         assert_database_revision_supported(
             "future-revision",
-            {"20260810_0000"},
+            {"20260810_0001"},
         )
 
 
 def test_known_database_revision_is_accepted() -> None:
     assert_database_revision_supported(
-        "20260810_0000",
-        {"20260810_0000"},
+        "20260810_0001",
+        {"20260810_0001"},
     )

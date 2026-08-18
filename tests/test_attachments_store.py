@@ -14,6 +14,12 @@ from app.attachments.errors import (
 )
 from app.attachments.models import ExtractionBlock, ExtractionResult
 from app.attachments.store import AttachmentStore
+from app.db.contracts import (
+    AttachmentBindingCommand,
+    ConsultationCommitCommand,
+    SessionUpdateCommand,
+    TurnWriteCommand,
+)
 from app.db.session import SessionStore
 
 
@@ -343,37 +349,49 @@ def test_expired_draft_is_unavailable_before_physical_cleanup(
 def test_atomic_session_turn_and_binding_roll_back_together(
     tmp_path: Path,
 ) -> None:
-    sessions, attachments = _stores(tmp_path / "app.db")
+    path = tmp_path / "app.db"
+    sessions, attachments = _stores(path)
     session = sessions.create_session()
     record = _confirmed(attachments)
     reservation_id = attachments.reserve([record.id])
     turn_id = str(uuid4())
-    binder = attachments.reservation_binder(
-        reservation_id,
-        expected_ids=[record.id],
-    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_attachment_binding
+            BEFORE UPDATE OF status ON attachments
+            WHEN NEW.status = 'bound'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected persistence failure');
+            END
+            """
+        )
 
-    def bind_then_fail(
-        connection: sqlite3.Connection,
-        session_id: str,
-        current_turn_id: str,
-    ) -> None:
-        binder(connection, session_id, current_turn_id)
-        raise RuntimeError("injected persistence failure")
-
-    with pytest.raises(RuntimeError, match="injected"):
+    with pytest.raises(sqlite3.IntegrityError, match="injected"):
         sessions.persist_session_turn(
-            session.id,
-            scenario_id="deposit_deduction",
-            facts={"deposit_amount": 2000},
-            followup_round=1,
-            status="need_more_facts",
-            jurisdiction="CN",
-            turn_id=turn_id,
-            user_message="房东扣了押金",
-            rule_matches=[],
-            response={"status": "need_more_facts"},
-            attachment_binder=bind_then_fail,
+            ConsultationCommitCommand(
+                owner_id=session.owner_id,
+                session_id=session.id,
+                session=SessionUpdateCommand(
+                    scenario_id="deposit_deduction",
+                    facts={"deposit_amount": 2000},
+                    followup_round=1,
+                    status="need_more_facts",
+                    jurisdiction="CN",
+                ),
+                turn=TurnWriteCommand(
+                    turn_id=turn_id,
+                    user_message="房东扣了押金",
+                    facts={"deposit_amount": 2000},
+                    rule_matches=(),
+                    response={"status": "need_more_facts"},
+                ),
+                attachment_binding=AttachmentBindingCommand(
+                    reservation_id=reservation_id,
+                    attachment_ids=(record.id,),
+                ),
+                occurred_at=NOW,
+            )
         )
 
     restored_session = sessions.require_session(session.id)

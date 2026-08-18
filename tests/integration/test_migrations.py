@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -38,5 +39,27 @@ def test_upgrade_head_is_repeatable_on_postgres() -> None:
     finally:
         engine.dispose()
 
-    assert first == "20260810_0000"
+    assert first == "20260810_0006"
     assert second == first
+
+
+def test_migrated_schema_matches_metadata_on_postgres() -> None:
+    database_url = os.getenv("TEST_POSTGRES_URL")
+    if not database_url:
+        pytest.skip("TEST_POSTGRES_URL is not configured")
+
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option(
+        "sqlalchemy.url",
+        database_url.replace("%", "%%"),
+    )
+    logger = logging.getLogger("weiquan.migration-probe")
+    logger.disabled = False
+
+    command.upgrade(config, "head")
+    command.check(config)
+
+    assert logger.disabled is False

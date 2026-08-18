@@ -109,6 +109,15 @@ def test_unknown_verdict_is_rejected() -> None:
         Playbook.model_validate(document)
 
 
+def test_rule_legal_refs_must_be_declared_by_playbook() -> None:
+    document = load_document()
+    rules = document["rules"]  # type: ignore[index]
+    rules[0]["legal_refs"] = ["伪造法.第一条"]
+
+    with pytest.raises(ValidationError, match="未在 legal_basis 声明"):
+        Playbook.model_validate(document)
+
+
 def test_default_rule_cannot_produce_ready_result() -> None:
     document = load_document()
     rules = document["rules"]  # type: ignore[index]

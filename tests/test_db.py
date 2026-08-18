@@ -11,6 +11,7 @@ from app.agent.errors import SessionNotFoundError
 from app.agent.models import UsageInfo
 from app.attachments.models import ExtractionBlock, ExtractionResult
 from app.attachments.store import AttachmentStore
+from app.db.contracts import LOCAL_DEVELOPMENT_OWNER_ID
 from app.db.session import BASE_SCHEMA_SQL, SCHEMA_VERSION, SessionStore
 
 
@@ -546,18 +547,53 @@ def test_real_v1_database_migrates_without_rewriting_history(
             ),
         )
         before_session = connection.execute(
-            "SELECT * FROM sessions"
+            """
+            SELECT id, scenario_id, facts_json, followup_round, status,
+                   jurisdiction, created_at, updated_at, expires_at
+            FROM sessions
+            """
         ).fetchone()
-        before_turn = connection.execute("SELECT * FROM turns").fetchone()
+        before_turn = connection.execute(
+            """
+            SELECT id, session_id, user_message, facts_json,
+                   rule_matches_json, response_json, provider_name,
+                   provider_model, provider_request_id, input_tokens,
+                   output_tokens, total_tokens, estimated_cost_usd,
+                   created_at
+            FROM turns
+            """
+        ).fetchone()
         connection.execute("PRAGMA user_version = 1")
 
     SessionStore(path, now=lambda: NOW).initialize()
 
     with sqlite3.connect(path) as connection:
         after_session = connection.execute(
-            "SELECT * FROM sessions"
+            """
+            SELECT id, scenario_id, facts_json, followup_round, status,
+                   jurisdiction, created_at, updated_at, expires_at
+            FROM sessions
+            """
         ).fetchone()
-        after_turn = connection.execute("SELECT * FROM turns").fetchone()
+        after_turn = connection.execute(
+            """
+            SELECT id, session_id, user_message, facts_json,
+                   rule_matches_json, response_json, provider_name,
+                   provider_model, provider_request_id, input_tokens,
+                   output_tokens, total_tokens, estimated_cost_usd,
+                   created_at
+            FROM turns
+            """
+        ).fetchone()
+        owners = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT owner_id FROM sessions
+                UNION SELECT owner_id FROM turns
+                """
+            )
+        }
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         attachment_columns = {
             row[1]
@@ -567,7 +603,8 @@ def test_real_v1_database_migrates_without_rewriting_history(
         }
     assert after_session == before_session
     assert after_turn == before_turn
-    assert version == 2
+    assert version == SCHEMA_VERSION
+    assert owners == {LOCAL_DEVELOPMENT_OWNER_ID}
     assert {
         "reservation_id",
         "reserved_at",

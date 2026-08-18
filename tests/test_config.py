@@ -26,7 +26,6 @@ def production_values(tmp_path: object) -> dict[str, object]:
         "aliyun_access_key_id": "aliyun-access-key-id",
         "aliyun_access_key_secret": "aliyun-access-key-secret",
         "directmail_account_name": "notice@example.test",
-        "captcha_scene_id": "captcha-scene",
         "oss_endpoint": "https://oss-cn-hangzhou.aliyuncs.com",
         "oss_bucket": "weiquan-private-test",
         "deletion_manifest_recipient": "age1productionrecipient",
@@ -135,8 +134,43 @@ def test_local_and_test_modes_keep_safe_development_defaults() -> None:
     assert local.deployment_mode == "local"
     assert local.database_dsn is None
     assert local.cookie_secure is False
+    assert local.llm_total_timeout_seconds == 30
     assert test.deployment_mode == "test"
     assert test.database_dsn is None
+
+
+@pytest.mark.parametrize("value", [0, -1, 30.01])
+def test_llm_total_timeout_rejects_values_outside_budget(
+    value: float,
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            llm_total_timeout_seconds=value,
+        )
+
+
+@pytest.mark.parametrize("value", [4, 61])
+def test_pending_trial_ip_grant_ttl_rejects_outside_bounds(
+    value: int,
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            trial_pending_ip_grant_ttl_minutes=value,
+        )
+
+
+@pytest.mark.parametrize("value", [5, 15, 60])
+def test_pending_trial_ip_grant_ttl_accepts_supported_values(
+    value: int,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        trial_pending_ip_grant_ttl_minutes=value,
+    )
+
+    assert settings.trial_pending_ip_grant_ttl_minutes == value
 
 
 def test_complete_production_settings_are_accepted(tmp_path) -> None:
@@ -146,6 +180,9 @@ def test_complete_production_settings_are_accepted(tmp_path) -> None:
     assert settings.database_dsn.startswith("postgresql+psycopg://")
     assert settings.public_origin == "https://weiquan.example.test"
     assert settings.cookie_secure is True
+    assert settings.captcha_enabled is False
+    assert settings.captcha_scene_id == ""
+    assert settings.captcha_prefix == ""
     assert settings.attachment_temp_path.is_absolute()
 
 
@@ -160,16 +197,55 @@ def test_production_missing_fields_fail_without_exposing_secrets(
         "ip-hmac-secret-value-with-at-least-32-bytes",
         "aliyun-access-key-secret",
     }
-    values.pop("captcha_scene_id")
     values.pop("oss_bucket")
 
     with pytest.raises(ValidationError) as caught:
         Settings(**values)
 
     error = str(caught.value)
-    assert "CAPTCHA_SCENE_ID" in error
     assert "OSS_BUCKET" in error
+    assert "CAPTCHA_PREFIX" not in error
+    assert "CAPTCHA_SCENE_ID" not in error
     assert all(secret not in error for secret in secret_values)
+
+
+def test_enabled_production_captcha_requires_complete_public_config(
+    tmp_path,
+) -> None:
+    values = production_values(tmp_path)
+    values["captcha_enabled"] = True
+
+    with pytest.raises(ValidationError) as caught:
+        Settings(**values)
+
+    error = str(caught.value)
+    assert "CAPTCHA_PREFIX" in error
+    assert "CAPTCHA_SCENE_ID" in error
+
+    values.update(
+        {
+            "captcha_scene_id": "captcha-scene",
+            "captcha_prefix": "captcha-prefix-1",
+        }
+    )
+    settings = Settings(**values)
+    assert settings.captcha_enabled is True
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "contains.dot",
+        "contains_underscore",
+        "-starts-with-hyphen",
+        "ends-with-hyphen-",
+        "contains whitespace",
+        "a" * 64,
+    ],
+)
+def test_captcha_prefix_rejects_unsafe_dns_labels(prefix: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, captcha_prefix=prefix)
 
 
 @pytest.mark.parametrize(

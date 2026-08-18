@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -10,6 +11,7 @@ from app.attachments.errors import (
     AttachmentInputError,
     AttachmentNotFoundError,
     AttachmentResourceLimitError,
+    AttachmentServiceBusyError,
     AttachmentServiceUnavailableError,
     AttachmentStateConflictError,
     build_attachment_error,
@@ -21,6 +23,7 @@ from app.attachments.models import (
     ExtractionBlock,
     ExtractionResult,
 )
+from app.db.models import AttachmentRecord
 
 
 def _block(**changes: object) -> ExtractionBlock:
@@ -171,6 +174,41 @@ def test_review_projection_rejects_inconsistent_status_data(
         _review(**changes)
 
 
+def test_internal_attachment_can_omit_unconfirmed_ocr_blocks() -> None:
+    now = datetime(2026, 8, 10, 8, 0, tzinfo=UTC)
+    record = AttachmentRecord(
+        id=str(uuid4()),
+        owner_id=str(uuid4()),
+        status="review_required",
+        original_name="订单.pdf",
+        media_type="application/pdf",
+        size_bytes=1024,
+        sha256="a" * 64,
+        page_count=1,
+        extraction_method="direct_text",
+        extracted_blocks=(),
+        created_at=now,
+        updated_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+
+    assert record.extracted_blocks == ()
+    with pytest.raises(ValidationError):
+        AttachmentReviewPublic(
+            id=record.id,
+            status=record.status,
+            original_name=record.original_name,
+            media_type=record.media_type,
+            size_bytes=record.size_bytes,
+            page_count=record.page_count,
+            extraction_method=record.extraction_method,
+            blocks=record.extracted_blocks,
+            warnings=record.warnings,
+            confirmed_text=record.confirmed_text,
+            error_code=record.error_code,
+        )
+
+
 def test_confirmed_text_is_trimmed_without_truncation() -> None:
     text = "证" * 12_001
     review = _review(status="confirmed", confirmed_text=f"  {text}\n")
@@ -237,6 +275,7 @@ def test_attachment_error_catalog_is_complete_and_safe() -> None:
         "attachment_already_bound",
         "attachment_count_exceeded",
         "attachment_context_too_long",
+        "attachment_service_busy",
         "attachment_service_unavailable",
     }
 
@@ -262,6 +301,7 @@ def test_attachment_error_factory_uses_narrow_error_types() -> None:
         "attachment_too_large": AttachmentResourceLimitError,
         "attachment_not_found": AttachmentNotFoundError,
         "attachment_not_reviewable": AttachmentStateConflictError,
+        "attachment_service_busy": AttachmentServiceBusyError,
         "attachment_service_unavailable": (
             AttachmentServiceUnavailableError
         ),

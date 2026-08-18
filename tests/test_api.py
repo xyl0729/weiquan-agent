@@ -10,11 +10,16 @@ from fastapi.testclient import TestClient
 import pytest
 from pydantic import ValidationError
 
+from app.agent.errors import (
+    CaseNoProgressError,
+    ConsultationConflictError,
+)
 from app.attachments.errors import AttachmentInputError
 from app.attachments.models import ExtractionBlock, ExtractionResult
 from app.attachments.service import AttachmentService
 from app.attachments.store import AttachmentStore
 from app.api.schemas import ConsultRequest, ConsultResponse
+from app.config import Settings
 from app.main import create_app
 from tests.test_pipeline import make_pipeline
 
@@ -55,6 +60,7 @@ class ApiExtractionWorker:
 
 def make_attachment_client(
     tmp_path: Path,
+    attachment_temp_dir: Path,
     *,
     worker: ApiExtractionWorker | None = None,
     ocr_ready: bool = True,
@@ -63,7 +69,7 @@ def make_attachment_client(
     pipeline, _ = make_pipeline(tmp_path)
     settings = pipeline.settings.model_copy(
         update={
-            "attachment_temp_dir": tmp_path / "attachment-jobs",
+            "attachment_temp_dir": attachment_temp_dir,
             "max_attachment_context_chars": max_context_chars,
         }
     )
@@ -121,7 +127,9 @@ def test_consult_api_followup_and_ready_response(tmp_path: Path) -> None:
     session_id = first.json()["session_id"]
     assert first.json()["status"] == "need_more_facts"
     assert first.json()["turn_kind"] == "fact_collection"
-    assert first.json()["reply"] is None
+    assert first.json()["reply"] is not None
+    assert "房东不退押金" in first.json()["reply"]["text"]
+    assert first.json()["reply"]["citation_refs"] == []
     assert first.json()["attachments"] == []
 
     second = client.post(
@@ -142,12 +150,126 @@ def test_consult_api_followup_and_ready_response(tmp_path: Path) -> None:
     assert body["turn_kind"] == "initial_plan"
     assert body["reply"] is None
     assert body["verdict"]["code"] == "deduction_lacks_stated_basis"
+    assert body["plan"]["communication_guide"]["recipient"]
+    assert (
+        body["plan"]["communication_text"]
+        == body["plan"]["communication_guide"]["message"]
+    )
     assert body["plan"]["rendered_text"].startswith("【立即保全证据】")
     assert len(body["citations"]) >= 7
     assert body["attachments"] == []
     assert body["usage"]["provider"] == "fake"
     assert "api_key" not in second.text.casefold()
     assert "authorization" not in second.text.casefold()
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_code", "expected_message"),
+    [
+        (
+            CaseNoProgressError,
+            "case_no_progress",
+            (
+                "当前信息下没有新的处理步骤；请补充对方回复、"
+                "新材料、新事件或风险变化后再继续"
+            ),
+        ),
+        (
+            ConsultationConflictError,
+            "consultation_conflict",
+            "会话刚刚发生更新，请重新提交本次追问",
+        ),
+    ],
+)
+def test_consult_progression_conflicts_use_stable_409_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    pipeline, _ = make_pipeline(tmp_path)
+
+    async def reject_consultation(**kwargs: Any) -> None:
+        del kwargs
+        raise error_type()
+
+    monkeypatch.setattr(pipeline, "consult", reject_consultation)
+    client = TestClient(
+        create_app(
+            pipeline.settings,
+            pipeline=pipeline,
+        )
+    )
+
+    response = client.post(
+        "/api/consult",
+        json={"message": "继续"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": {
+            "code": expected_code,
+            "message": expected_message,
+        }
+    }
+
+
+def test_consult_api_rejects_public_provider_selection(
+    tmp_path: Path,
+) -> None:
+    pipeline, _ = make_pipeline(tmp_path)
+    client = TestClient(
+        create_app(
+            pipeline.settings,
+            pipeline=pipeline,
+        )
+    )
+
+    response = client.post(
+        "/api/consult",
+        json={
+            "message": "房东不退押金",
+            "provider_id": "fake",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "request_validation",
+            "message": "请求字段无效",
+        }
+    }
+
+
+def test_provider_catalog_api_exposes_only_safe_status(
+    tmp_path: Path,
+) -> None:
+    pipeline, _ = make_pipeline(tmp_path)
+    settings = pipeline.settings.model_copy(
+        update={"deepseek_api_key": "do-not-expose"}
+    )
+    client = TestClient(create_app(settings, pipeline=pipeline))
+
+    response = client.get("/api/providers")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "providers": [
+            {
+                "id": "deepseek",
+                "display_name": "DeepSeek",
+                "model": settings.deepseek_model,
+                "available": True,
+                "unavailable_reason": None,
+                "offline": False,
+                "is_default": True,
+            },
+        ]
+    }
+    assert "do-not-expose" not in response.text
 
 
 def test_invalid_body_does_not_echo_secret_like_input(
@@ -210,6 +332,8 @@ def test_unknown_session_maps_to_safe_422(tmp_path: Path) -> None:
         "plan_update",
         "followup_answer",
         "new_case",
+        "unverified_guidance",
+        "emergency_guidance",
     ],
 )
 def test_consult_response_accepts_valid_turn_kind_combinations(
@@ -221,6 +345,54 @@ def test_consult_response_accepts_valid_turn_kind_combinations(
 
     assert response.turn_kind == turn_kind
     assert response.attachments == []
+
+
+def test_consult_response_accepts_unverified_coverage_for_safe_clarification(
+) -> None:
+    payload = _response_for_turn_kind("fact_collection")
+    payload["coverage"] = {
+        "mode": "unverified_guidance",
+        "topic_id": "medical_service_dispute",
+        "topic_label": "医疗服务与病历争议",
+        "confidence": 0.86,
+        "playbook_id": None,
+        "notice": "当前仅保留已识别主题，补充事实后再继续判断。",
+        "risk_flags": [],
+    }
+
+    response = ConsultResponse.model_validate(payload)
+
+    assert response.turn_kind == "fact_collection"
+    assert response.guidance is None
+    assert response.coverage is not None
+    assert response.coverage.mode == "unverified_guidance"
+    assert response.coverage.topic_id == "medical_service_dispute"
+
+
+def test_safe_unverified_clarification_rejects_citations() -> None:
+    payload = _response_for_turn_kind("fact_collection")
+    payload["coverage"] = {
+        "mode": "unverified_guidance",
+        "topic_id": "medical_service_dispute",
+        "topic_label": "医疗服务与病历争议",
+        "confidence": 0.86,
+        "playbook_id": None,
+        "notice": "当前仅保留已识别主题，补充事实后再继续判断。",
+        "risk_flags": [],
+    }
+    payload["citations"] = [
+        {
+            "ref": "invented",
+            "law_name": "虚构法",
+            "article_no": "第一条",
+            "content": "虚构内容",
+            "effective_date": "2026-08-08",
+            "source_url": "https://example.com",
+        }
+    ]
+
+    with pytest.raises(ValidationError):
+        ConsultResponse.model_validate(payload)
 
 
 def test_consult_request_attachment_ids_default_and_validation() -> None:
@@ -281,7 +453,7 @@ def test_consult_api_rejects_invalid_attachment_ids(
     ("turn_kind", "invalid_case"),
     [
         ("fact_collection", "empty_collection"),
-        ("fact_collection", "unexpected_reply"),
+        ("fact_collection", "reply_with_citation"),
         ("initial_plan", "missing_plan"),
         ("initial_plan", "unexpected_reply"),
         ("plan_update", "missing_verdict"),
@@ -297,6 +469,8 @@ def test_consult_response_rejects_invalid_turn_kind_combinations(
     payload = _response_for_turn_kind(turn_kind)
     if invalid_case == "empty_collection":
         payload.update({"questions": [], "limitations": []})
+    elif invalid_case == "reply_with_citation":
+        payload["reply"] = _reply_payload(citation_refs=["invented"])
     elif invalid_case == "unexpected_reply":
         payload["reply"] = _reply_payload()
     elif invalid_case == "missing_plan":
@@ -329,6 +503,55 @@ def test_consult_response_requires_reply_citations_to_match_top_level() -> None:
         ConsultResponse.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    "turn_kind",
+    ["unverified_guidance", "emergency_guidance"],
+)
+def test_guidance_turn_rejects_formal_artifacts_and_case_citations(
+    turn_kind: str,
+) -> None:
+    payload = _response_for_turn_kind(turn_kind)
+    payload.update(
+        {
+            "plan": _plan_payload(),
+            "verdict": _verdict_payload(),
+            "citations": [
+                {
+                    "ref": "invented",
+                    "law_name": "虚构法",
+                    "article_no": "第一条",
+                    "content": "虚构内容",
+                    "effective_date": "2026-08-08",
+                    "source_url": "https://example.com",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ValidationError):
+        ConsultResponse.model_validate(payload)
+
+
+def test_unverified_guidance_allows_general_citations() -> None:
+    payload = _response_for_turn_kind("unverified_guidance")
+    payload["citations"] = [
+        {
+            "ref": "民法典.第五百七十七条",
+            "law_name": "中华人民共和国民法典",
+            "article_no": "第五百七十七条",
+            "content": "当事人一方不履行合同义务，应当承担违约责任。",
+            "effective_date": "2021-01-01",
+            "source_url": "https://example.com/law",
+            "basis_scope": "general",
+            "applicability_notice": "是否适用于本案仍需结合具体事实核对。",
+        }
+    ]
+
+    response = ConsultResponse.model_validate(payload)
+
+    assert response.citations[0].basis_scope == "general"
+
+
 def _response_for_turn_kind(turn_kind: str) -> dict[str, object]:
     payload: dict[str, object] = {
         "session_id": str(uuid4()),
@@ -338,6 +561,8 @@ def _response_for_turn_kind(turn_kind: str) -> dict[str, object]:
         "can_ask_more": False,
         "status": "ready",
         "turn_kind": turn_kind,
+        "coverage": None,
+        "guidance": None,
         "verdict": None,
         "plan": None,
         "reply": None,
@@ -378,6 +603,47 @@ def _response_for_turn_kind(turn_kind: str) -> dict[str, object]:
                 "scenario_id": "return_refused",
                 "label": "退货换货被拒",
             },
+        )
+    elif turn_kind in {
+        "unverified_guidance",
+        "emergency_guidance",
+    }:
+        emergency = turn_kind == "emergency_guidance"
+        limitations = ["本结果不构成正式法律结论"]
+        payload.update(
+            {
+                "status": "escalate" if emergency else "need_more_facts",
+                "can_ask_more": not emergency,
+                "coverage": {
+                    "mode": turn_kind,
+                    "topic_id": "education_minor_safety",
+                    "topic_label": "教育、未成年人和校园安全",
+                    "confidence": 0.9,
+                    "playbook_id": None,
+                    "notice": "当前提供受限指导。",
+                    "risk_flags": ["minor_harm"] if emergency else [],
+                },
+                "guidance": {
+                    "direct_answer": None,
+                    "evidence_now": ["保存现有沟通记录"],
+                    "actions": ["先确保人身安全"],
+                    "communication_guide": {
+                        "recipient": "学校负责人",
+                        "channels": ["学校官方邮箱"],
+                        "when_to_send": "整理现有事实后尽快发送",
+                        "objective": "要求书面确认收悉并说明处理安排",
+                        "message": "您好，我想书面反映相关情况，请确认收悉。",
+                        "after_sending": ["保存发送和回复记录"],
+                        "escalation": ["没有回应时向主管机构求助"],
+                        "required_before_send": [],
+                    },
+                    "limitations": limitations,
+                    "next_question": (
+                        None if emergency else "事件发生在什么时候？"
+                    ),
+                },
+                "limitations": limitations,
+            }
         )
     return payload
 
@@ -467,8 +733,12 @@ def test_health_reports_local_dependencies_without_secrets(
 
 def test_attachment_api_upload_review_confirm_delete_and_cors(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
-    client, _, _, worker = make_attachment_client(tmp_path)
+    client, _, _, worker = make_attachment_client(
+        tmp_path,
+        project_attachment_temp_dir,
+    )
 
     uploaded = upload_pdf(client)
 
@@ -552,9 +822,11 @@ def test_attachment_api_upload_review_confirm_delete_and_cors(
 
 def test_confirmed_upload_can_be_used_by_consultation(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     client, application, attachments, _ = make_attachment_client(
-        tmp_path
+        tmp_path,
+        project_attachment_temp_dir,
     )
     uploaded = upload_pdf(client)
     attachment_id = uploaded.json()["id"]
@@ -604,11 +876,16 @@ def test_confirmed_upload_can_be_used_by_consultation(
 
 def test_attachment_api_returns_safe_failed_public_object(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     worker = ApiExtractionWorker(
         error=AttachmentInputError("attachment_corrupt")
     )
-    client, _, _, _ = make_attachment_client(tmp_path, worker=worker)
+    client, _, _, _ = make_attachment_client(
+        tmp_path,
+        project_attachment_temp_dir,
+        worker=worker,
+    )
 
     response = upload_pdf(client)
 
@@ -623,9 +900,11 @@ def test_attachment_api_returns_safe_failed_public_object(
 
 def test_attachment_api_validation_state_and_idempotence(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     client, _, attachments, _ = make_attachment_client(
         tmp_path,
+        project_attachment_temp_dir,
         max_context_chars=8,
     )
     uploaded = upload_pdf(client)
@@ -731,9 +1010,11 @@ def test_attachment_api_validation_state_and_idempotence(
 
 def test_ocr_unavailable_only_disables_upload(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
 ) -> None:
     client, _, attachments, worker = make_attachment_client(
         tmp_path,
+        project_attachment_temp_dir,
         ocr_ready=False,
     )
     review = attachments.create_processing(
@@ -786,11 +1067,12 @@ def test_ocr_unavailable_only_disables_upload(
 
 def test_startup_recovers_processing_and_caches_ocr_readiness(
     tmp_path: Path,
+    project_attachment_temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pipeline, sessions = make_pipeline(tmp_path)
     settings = pipeline.settings.model_copy(
-        update={"attachment_temp_dir": tmp_path / "startup-jobs"}
+        update={"attachment_temp_dir": project_attachment_temp_dir}
     )
     attachments = AttachmentStore(
         sessions,
@@ -843,9 +1125,18 @@ def test_web_index_static_assets_and_security_headers(
     index = client.get("/")
     stylesheet = client.get("/static/styles.css")
     favicon = client.get("/static/favicon.svg")
+    script_names = (
+        "api",
+        "state",
+        "auth",
+        "captcha",
+        "privacy",
+        "render",
+        "app",
+    )
     scripts = [
         client.get(f"/static/js/{name}.js")
-        for name in ("api", "state", "render", "app")
+        for name in script_names
     ]
 
     assert index.status_code == 200
@@ -853,9 +1144,32 @@ def test_web_index_static_assets_and_security_headers(
     assert "维权咨询助手" in index.text
     assert 'src="/static/js/app.js"' in index.text
     assert 'href="/static/favicon.svg"' in index.text
+    for source in ("new", "case"):
+        for control in (
+            "attachment-input",
+            "attachment-trigger",
+            "attachment-list",
+            "attachment-blocker",
+        ):
+            assert f'id="{source}-{control}"' in index.text
+    for control in (
+        "dialog",
+        "form",
+        "pages",
+        "count",
+        "confirm",
+    ):
+        assert f'id="attachment-review-{control}"' in index.text
+    assert "provider-options" not in index.text
+    assert "provider-retry" not in index.text
+    assert "provider-toolbar" not in index.text
     assert stylesheet.status_code == 200
     assert stylesheet.headers["content-type"].startswith("text/css")
     assert "--paper: #ffffff" in stylesheet.text
+    assert (
+        "grid-template-columns: 18px minmax(0, 1fr) 18px;"
+        in stylesheet.text
+    )
     assert favicon.status_code == 200
     assert favicon.headers["content-type"].startswith("image/svg+xml")
     assert all(response.status_code == 200 for response in scripts)
@@ -864,13 +1178,45 @@ def test_web_index_static_assets_and_security_headers(
         for response in scripts
     )
 
-    script_source = "\n".join(response.text for response in scripts)
+    script_sources = {
+        name: response.text
+        for name, response in zip(script_names, scripts, strict=True)
+    }
+    script_source = "\n".join(script_sources.values())
     assert "innerHTML" not in script_source
     assert "insertAdjacentHTML" not in script_source
     assert "localStorage" not in script_source
     assert "deepseek_api_key" not in script_source.casefold()
     assert "authorization" not in script_source.casefold()
     assert "sessionStorage" in script_source
+    for contract_marker in (
+        '"/api/auth/captcha-config"',
+        '"/api/auth/login"',
+        '"/api/auth/logout"',
+        '"/api/trial/start"',
+        '"/api/trial/consult"',
+        '"/api/privacy"',
+        "unverified_guidance",
+        "emergency_guidance",
+        "communication_guide",
+        "request_id",
+        "estimated_cost_usd",
+        '"/api/attachments"',
+        "attachment_ids",
+        "FormData",
+    ):
+        assert contract_marker in script_source
+    state_source = script_sources["state"]
+    assert "ATTACHMENT_DRAFTS_KEY" in state_source
+    assert "cleanUuidList" in state_source
+    assert "clearAuthenticatedState" in state_source
+    for forbidden_ledger_field in (
+        "confirmed_text",
+        "original_name",
+        "blocks",
+        "warnings",
+    ):
+        assert forbidden_ledger_field not in state_source
 
     for response in (index, stylesheet, favicon, *scripts):
         csp = response.headers["content-security-policy"]

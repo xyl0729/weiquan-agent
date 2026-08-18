@@ -233,7 +233,7 @@ def test_pipeline_checks_real_provider_limit_before_call(
     assert restored.turn_id is None
 
 
-def test_continuation_records_one_call_and_one_usage_entry(
+def test_continuation_and_composition_record_both_provider_calls(
     tmp_path: Path,
 ) -> None:
     class DeepSeekLikeFake(FakeProvider):
@@ -245,7 +245,7 @@ def test_continuation_records_one_call_and_one_usage_entry(
     controls = make_controls(
         controls_store,
         clock,
-        rate_limit=2,
+        rate_limit=3,
     )
     provider = DeepSeekLikeFake(
         continuation_responses=[
@@ -294,9 +294,9 @@ def test_continuation_records_one_call_and_one_usage_entry(
     assert provider.extraction_calls == 1
     assert provider.continuation_calls == 1
     assert rate is not None
-    assert rate.request_count == 2
+    assert rate.request_count == 3
     assert usage is not None
-    assert usage.request_count == 2
+    assert usage.request_count == 3
     assert usage.total_tokens == 12
 
     with pytest.raises(RateLimitError):
