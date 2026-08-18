@@ -27,6 +27,8 @@ _TURN_KINDS: set[str] = {
     "plan_update",
     "followup_answer",
     "new_case",
+    "unverified_guidance",
+    "emergency_guidance",
 }
 
 
@@ -55,12 +57,13 @@ def build_case_continuation_context(
             "historical_plan_missing",
             "已有方案无法恢复",
         )
-    plan, verdict = plan_parts
+    plan, verdict, response = plan_parts
 
     statute_by_ref = {statute.ref: statute for statute in statutes}
     purpose_by_ref = {
         basis.ref: basis.purpose for basis in playbook.legal_basis
     }
+    citation_refs = _historical_citation_refs(response, playbook)
     try:
         locked_case = LockedCaseContext(
             verdict_label=_required_text(verdict, "label"),
@@ -77,13 +80,13 @@ def build_case_continuation_context(
             limitations=_required_text_list(plan, "limitations"),
             citations=[
                 CaseCitation(
-                    ref=basis.ref,
-                    law_name=statute_by_ref[basis.ref].law_name,
-                    article_no=statute_by_ref[basis.ref].article_no,
-                    content=statute_by_ref[basis.ref].content,
-                    purpose=purpose_by_ref[basis.ref],
+                    ref=ref,
+                    law_name=statute_by_ref[ref].law_name,
+                    article_no=statute_by_ref[ref].article_no,
+                    content=statute_by_ref[ref].content,
+                    purpose=purpose_by_ref[ref],
                 )
-                for basis in playbook.legal_basis
+                for ref in citation_refs
             ],
         )
         return CaseContinuationContext(
@@ -116,12 +119,37 @@ def _scenario(playbook: Playbook) -> CaseScenario:
 
 def _plan_parts(
     response: Mapping[str, Any],
-) -> tuple[Mapping[str, Any], Mapping[str, Any]] | None:
+) -> tuple[
+    Mapping[str, Any],
+    Mapping[str, Any],
+    Mapping[str, Any],
+] | None:
     plan = response.get("plan")
     verdict = response.get("verdict")
     if isinstance(plan, Mapping) and isinstance(verdict, Mapping):
-        return plan, verdict
+        return plan, verdict, response
     return None
+
+
+def _historical_citation_refs(
+    response: Mapping[str, Any],
+    playbook: Playbook,
+) -> list[str]:
+    all_refs = [basis.ref for basis in playbook.legal_basis]
+    value = response.get("citations")
+    if not isinstance(value, list) or not value:
+        return all_refs
+    refs = [
+        item.get("ref")
+        for item in value
+        if isinstance(item, Mapping)
+        and isinstance(item.get("ref"), str)
+    ]
+    if len(refs) != len(value) or len(refs) != len(set(refs)):
+        raise ValueError("历史方案法条引用无效")
+    if not set(refs).issubset(all_refs):
+        raise ValueError("历史方案包含场景外法条引用")
+    return refs
 
 
 def _recent_turns(turns: Sequence[TurnRecord]) -> list[RecentCaseTurn]:
@@ -137,7 +165,7 @@ def _recent_turns(turns: Sequence[TurnRecord]) -> list[RecentCaseTurn]:
 
         reply = _assistant_reply(turn.response)
         if reply is not None and remaining > 0:
-            reply = reply[: min(800, remaining)].strip() or None
+            reply = reply[: min(1200, remaining)].strip() or None
             remaining -= len(reply or "")
         else:
             reply = None
