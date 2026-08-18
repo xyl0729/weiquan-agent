@@ -81,6 +81,7 @@ jobs:
           node --check app/web/js/api.js
           node --check app/web/js/state.js
           node --check app/web/js/auth.js
+          node --check app/web/js/capabilities.js
           node --check app/web/js/captcha.js
           node --check app/web/js/privacy.js
           node --check app/web/js/render.js
@@ -90,7 +91,7 @@ jobs:
         run: |
           sudo install -d -m 755 /etc/weiquan
           sudo install -m 600 /dev/null /etc/weiquan/weiquan.env
-          docker compose -f deploy/compose.production.yml config
+          sudo docker compose -f deploy/compose.production.yml config
 
       - name: Check patch whitespace
         run: git diff --check
