@@ -10,9 +10,20 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from app.agent.errors import SessionNotFoundError
+from app.agent.errors import (
+    CaseNoProgressError,
+    ConsultationConflictError,
+    SessionNotFoundError,
+)
 from app.agent.models import UsageInfo
+from app.attachments.errors import AttachmentStateConflictError
+from app.db.contracts import (
+    LOCAL_DEVELOPMENT_OWNER_ID,
+    AttachmentBindingCommand,
+    ConsultationCommitCommand,
+)
 from app.db.models import (
+    AttachmentRecord,
     AuditRecord,
     RateLimitDailyRecord,
     SessionHistoryRecord,
@@ -25,7 +36,7 @@ from app.db.models import (
 )
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _UNSET = object()
 _PURGE_LIMIT = 100
 _SECRET_PATTERN = re.compile(
@@ -282,6 +293,48 @@ ON attachments(turn_id, turn_position)
 WHERE turn_id IS NOT NULL;
 """
 
+OWNER_SCHEMA_SQL = f"""
+ALTER TABLE sessions
+ADD COLUMN owner_id TEXT NOT NULL
+DEFAULT '{LOCAL_DEVELOPMENT_OWNER_ID}';
+
+ALTER TABLE turns
+ADD COLUMN owner_id TEXT NOT NULL
+DEFAULT '{LOCAL_DEVELOPMENT_OWNER_ID}';
+
+ALTER TABLE attachments
+ADD COLUMN owner_id TEXT NOT NULL
+DEFAULT '{LOCAL_DEVELOPMENT_OWNER_ID}';
+
+ALTER TABLE audit_records
+ADD COLUMN owner_id TEXT NOT NULL
+DEFAULT '{LOCAL_DEVELOPMENT_OWNER_ID}';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_owner_id
+ON sessions(owner_id, id);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_owner_updated
+ON sessions(owner_id, updated_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_owner_id
+ON turns(owner_id, id);
+
+CREATE INDEX IF NOT EXISTS idx_turns_owner_session_created
+ON turns(owner_id, session_id, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_owner_id
+ON attachments(owner_id, id);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_owner_expires
+ON attachments(owner_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_owner_turn
+ON attachments(owner_id, turn_id, turn_position);
+
+CREATE INDEX IF NOT EXISTS idx_audit_owner_session
+ON audit_records(owner_id, session_id, created_at);
+"""
+
 
 class SessionStore:
     def __init__(
@@ -313,15 +366,20 @@ class SessionStore:
                 return
             if version == 0 and self._has_user_tables(connection):
                 raise RuntimeError("未识别的数据库 schema 版本")
-            if version not in {0, 1}:
+            if version not in {0, 1, 2}:
                 raise RuntimeError("不支持的数据库 schema 版本")
 
             schema = BASE_SCHEMA_SQL if version == 0 else ""
+            attachment_schema = (
+                ATTACHMENT_SCHEMA_SQL if version < 2 else ""
+            )
+            owner_schema = OWNER_SCHEMA_SQL if version < 3 else ""
             script = "\n".join(
                 (
                     "BEGIN IMMEDIATE;",
                     schema,
-                    ATTACHMENT_SCHEMA_SQL,
+                    attachment_schema,
+                    owner_schema,
                     f"PRAGMA user_version = {SCHEMA_VERSION};",
                 )
             )
@@ -336,6 +394,7 @@ class SessionStore:
     def create_session(
         self,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         scenario_id: str | None = None,
         facts: Mapping[str, Any] | None = None,
         jurisdiction: str | None = None,
@@ -343,6 +402,7 @@ class SessionStore:
         session_id: str | None = None,
     ) -> SessionRecord:
         created_at = self._utc(now)
+        normalized_owner_id = _uuid(owner_id)
         normalized_id = _uuid(session_id)
         safe_facts = dict(facts or {})
         facts_json = _json(safe_facts)
@@ -351,12 +411,14 @@ class SessionStore:
             connection.execute(
                 """
                 INSERT INTO sessions (
-                    id, scenario_id, facts_json, followup_round, status,
-                    jurisdiction, created_at, updated_at, expires_at
-                ) VALUES (?, ?, ?, 0, 'collecting', ?, ?, ?, ?)
+                    id, owner_id, scenario_id, facts_json,
+                    followup_round, status, jurisdiction, created_at,
+                    updated_at, expires_at
+                ) VALUES (?, ?, ?, ?, 0, 'collecting', ?, ?, ?, ?)
                 """,
                 (
                     normalized_id,
+                    normalized_owner_id,
                     _optional_text(scenario_id, 100),
                     facts_json,
                     _optional_text(jurisdiction, 100),
@@ -366,8 +428,11 @@ class SessionStore:
                 ),
             )
             row = connection.execute(
-                "SELECT * FROM sessions WHERE id = ?",
-                (normalized_id,),
+                """
+                SELECT * FROM sessions
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_id, normalized_owner_id),
             ).fetchone()
         return _session_from_row(_required_row(row))
 
@@ -375,15 +440,20 @@ class SessionStore:
         self,
         session_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> SessionRecord | None:
         normalized_id = _uuid(session_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self._connect() as connection:
             self._purge(connection, current)
             row = connection.execute(
-                "SELECT * FROM sessions WHERE id = ?",
-                (normalized_id,),
+                """
+                SELECT * FROM sessions
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_id, normalized_owner_id),
             ).fetchone()
         return _session_from_row(row) if row is not None else None
 
@@ -391,9 +461,14 @@ class SessionStore:
         self,
         session_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> SessionRecord:
-        session = self.get_session(session_id, now=now)
+        session = self.get_session(
+            session_id,
+            owner_id=owner_id,
+            now=now,
+        )
         if session is None:
             raise SessionNotFoundError()
         return session
@@ -401,8 +476,10 @@ class SessionStore:
     def list_sessions(
         self,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> list[SessionListRecord]:
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self._connect() as connection:
             self._purge(connection, current)
@@ -410,6 +487,7 @@ class SessionStore:
                 """
                 SELECT
                     sessions.id,
+                    sessions.owner_id,
                     sessions.scenario_id,
                     sessions.status,
                     sessions.created_at,
@@ -419,17 +497,21 @@ class SessionStore:
                         SELECT turns.user_message
                         FROM turns
                         WHERE turns.session_id = sessions.id
+                          AND turns.owner_id = sessions.owner_id
                         ORDER BY turns.created_at, turns.id
                         LIMIT 1
                     ) AS first_user_message
                 FROM sessions
-                WHERE EXISTS (
+                WHERE sessions.owner_id = ?
+                  AND EXISTS (
                     SELECT 1
                     FROM turns
                     WHERE turns.session_id = sessions.id
+                      AND turns.owner_id = sessions.owner_id
                 )
                 ORDER BY sessions.updated_at DESC, sessions.id
-                """
+                """,
+                (normalized_owner_id,),
             ).fetchall()
         return [_session_list_from_row(row) for row in rows]
 
@@ -437,25 +519,30 @@ class SessionStore:
         self,
         session_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> SessionHistoryRecord | None:
         normalized_id = _uuid(session_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self._connect() as connection:
             self._purge(connection, current)
             session_row = connection.execute(
-                "SELECT * FROM sessions WHERE id = ?",
-                (normalized_id,),
+                """
+                SELECT * FROM sessions
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_id, normalized_owner_id),
             ).fetchone()
             if session_row is None:
                 return None
             turn_rows = connection.execute(
                 """
                 SELECT * FROM turns
-                WHERE session_id = ?
+                WHERE session_id = ? AND owner_id = ?
                 ORDER BY created_at, id
                 """,
-                (normalized_id,),
+                (normalized_id, normalized_owner_id),
             ).fetchall()
             attachment_rows = connection.execute(
                 """
@@ -463,14 +550,22 @@ class SessionStore:
                 FROM attachments
                 LEFT JOIN turns AS related_turn
                   ON related_turn.id = attachments.turn_id
-                WHERE attachments.session_id = ?
-                   OR related_turn.session_id = ?
+                 AND related_turn.owner_id = attachments.owner_id
+                WHERE attachments.owner_id = ?
+                  AND (
+                    attachments.session_id = ?
+                    OR related_turn.session_id = ?
+                  )
                 ORDER BY
                     attachments.turn_id,
                     attachments.turn_position,
                     attachments.id
                 """,
-                (normalized_id, normalized_id),
+                (
+                    normalized_owner_id,
+                    normalized_id,
+                    normalized_id,
+                ),
             ).fetchall()
 
             session = _session_from_row(session_row)
@@ -517,15 +612,20 @@ class SessionStore:
         self,
         session_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
     ) -> bool:
         normalized_id = _uuid(session_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self._connect() as connection:
             self._purge(connection, current)
             cursor = connection.execute(
-                "DELETE FROM sessions WHERE id = ?",
-                (normalized_id,),
+                """
+                DELETE FROM sessions
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_id, normalized_owner_id),
             )
         return cursor.rowcount > 0
 
@@ -533,6 +633,7 @@ class SessionStore:
         self,
         session_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         scenario_id: str | None | object = _UNSET,
         facts: Mapping[str, Any] | object = _UNSET,
         followup_round: int | object = _UNSET,
@@ -541,12 +642,16 @@ class SessionStore:
         now: datetime | None = None,
     ) -> SessionRecord:
         normalized_id = _uuid(session_id)
+        normalized_owner_id = _uuid(owner_id)
         current = self._utc(now)
         with self._connect() as connection:
             self._purge(connection, current)
             row = connection.execute(
-                "SELECT * FROM sessions WHERE id = ?",
-                (normalized_id,),
+                """
+                SELECT * FROM sessions
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_id, normalized_owner_id),
             ).fetchone()
             if row is None:
                 raise SessionNotFoundError()
@@ -581,7 +686,7 @@ class SessionStore:
                 SET scenario_id = ?, facts_json = ?, followup_round = ?,
                     status = ?, jurisdiction = ?, updated_at = ?,
                     expires_at = ?
-                WHERE id = ?
+                WHERE id = ? AND owner_id = ?
                 """,
                 (
                     values["scenario_id"],
@@ -592,11 +697,15 @@ class SessionStore:
                     _iso(current),
                     _iso(expires_at),
                     normalized_id,
+                    normalized_owner_id,
                 ),
             )
             updated = connection.execute(
-                "SELECT * FROM sessions WHERE id = ?",
-                (normalized_id,),
+                """
+                SELECT * FROM sessions
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_id, normalized_owner_id),
             ).fetchone()
         return _session_from_row(_required_row(updated))
 
@@ -604,6 +713,7 @@ class SessionStore:
         self,
         session_id: str,
         *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         user_message: str,
         facts: Mapping[str, Any],
         rule_matches: Sequence[Mapping[str, Any]],
@@ -616,6 +726,7 @@ class SessionStore:
         turn_id: str | None = None,
     ) -> TurnRecord:
         normalized_session_id = _uuid(session_id)
+        normalized_owner_id = _uuid(owner_id)
         normalized_turn_id = _uuid(turn_id)
         current = self._utc(now)
         usage = usage or UsageInfo()
@@ -627,19 +738,25 @@ class SessionStore:
         matches_json = _json([dict(item) for item in rule_matches])
         response_json = _json(dict(response))
         with self._connect() as connection:
-            self._require_active(connection, normalized_session_id, current)
+            self._require_active(
+                connection,
+                normalized_session_id,
+                normalized_owner_id,
+                current,
+            )
             connection.execute(
                 """
                 INSERT INTO turns (
-                    id, session_id, user_message, facts_json,
+                    id, owner_id, session_id, user_message, facts_json,
                     rule_matches_json, response_json, provider_name,
                     provider_model, provider_request_id, input_tokens,
                     output_tokens, total_tokens, estimated_cost_usd,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     normalized_turn_id,
+                    normalized_owner_id,
                     normalized_session_id,
                     safe_message,
                     facts_json,
@@ -655,68 +772,78 @@ class SessionStore:
                     _iso(current),
                 ),
             )
-            self._touch(connection, normalized_session_id, current)
+            self._touch(
+                connection,
+                normalized_session_id,
+                normalized_owner_id,
+                current,
+            )
             row = connection.execute(
-                "SELECT * FROM turns WHERE id = ?",
-                (normalized_turn_id,),
+                """
+                SELECT * FROM turns
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_turn_id, normalized_owner_id),
             ).fetchone()
         return _turn_from_row(_required_row(row))
 
     def persist_session_turn(
         self,
-        session_id: str,
-        *,
-        scenario_id: str | None,
-        facts: Mapping[str, Any],
-        followup_round: int,
-        status: str,
-        jurisdiction: str | None,
-        user_message: str,
-        rule_matches: Sequence[Mapping[str, Any]],
-        response: Mapping[str, Any],
-        provider_name: str | None = None,
-        provider_model: str | None = None,
-        provider_request_id: str | None = None,
-        usage: UsageInfo | None = None,
-        now: datetime | None = None,
-        turn_id: str | None = None,
-        attachment_binder: Callable[
-            [sqlite3.Connection, str, str],
-            object,
-        ]
-        | None = None,
+        command: ConsultationCommitCommand,
     ) -> TurnRecord:
-        normalized_session_id = _uuid(session_id)
-        normalized_turn_id = _uuid(turn_id)
-        current = self._utc(now)
-        normalized_round = int(followup_round)
+        normalized_owner_id = _uuid(command.owner_id)
+        normalized_session_id = _uuid(command.session_id)
+        normalized_turn_id = _uuid(command.turn.turn_id)
+        current = self._utc(command.occurred_at)
+        normalized_round = int(command.session.followup_round)
         if not 0 <= normalized_round <= 2:
             raise ValueError("followup_round 必须在 0 到 2 之间")
-        normalized_status = _session_status(status)
-        normalized_scenario = _optional_text(scenario_id, 100)
-        normalized_jurisdiction = _optional_text(jurisdiction, 100)
-        safe_facts = dict(facts)
+        normalized_status = _session_status(command.session.status)
+        normalized_scenario = _optional_text(
+            command.session.scenario_id,
+            100,
+        )
+        normalized_jurisdiction = _optional_text(
+            command.session.jurisdiction,
+            100,
+        )
+        safe_facts = dict(command.session.facts)
         facts_json = _json(safe_facts)
-        matches_json = _json([dict(item) for item in rule_matches])
-        response_json = _json(dict(response))
-        safe_message = _redact_text(user_message.strip())
+        turn_facts_json = _json(dict(command.turn.facts))
+        matches_json = _json(
+            [dict(item) for item in command.turn.rule_matches]
+        )
+        response_json = _json(dict(command.turn.response))
+        safe_message = _redact_text(command.turn.user_message.strip())
         if not safe_message:
             raise ValueError("user_message 不能为空")
-        normalized_usage = usage or UsageInfo()
+        normalized_usage = command.turn.usage
 
         with self.transaction(immediate=True) as connection:
             self._require_active(
                 connection,
                 normalized_session_id,
+                normalized_owner_id,
                 current,
             )
-            connection.execute(
+            latest = connection.execute(
+                """
+                SELECT id, response_json
+                FROM turns
+                WHERE session_id = ? AND owner_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (normalized_session_id, normalized_owner_id),
+            ).fetchone()
+            _recheck_consultation_commit(command, latest)
+            cursor = connection.execute(
                 """
                 UPDATE sessions
                 SET scenario_id = ?, facts_json = ?, followup_round = ?,
                     status = ?, jurisdiction = ?, updated_at = ?,
                     expires_at = ?
-                WHERE id = ?
+                WHERE id = ? AND owner_id = ?
                 """,
                 (
                     normalized_scenario,
@@ -727,28 +854,35 @@ class SessionStore:
                     _iso(current),
                     _iso(current + self.ttl),
                     normalized_session_id,
+                    normalized_owner_id,
                 ),
             )
+            if cursor.rowcount != 1:
+                raise SessionNotFoundError()
             connection.execute(
                 """
                 INSERT INTO turns (
-                    id, session_id, user_message, facts_json,
+                    id, owner_id, session_id, user_message, facts_json,
                     rule_matches_json, response_json, provider_name,
                     provider_model, provider_request_id, input_tokens,
                     output_tokens, total_tokens, estimated_cost_usd,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     normalized_turn_id,
+                    normalized_owner_id,
                     normalized_session_id,
                     safe_message,
-                    facts_json,
+                    turn_facts_json,
                     matches_json,
                     response_json,
-                    _optional_text(provider_name, 50),
-                    _optional_text(provider_model, 200),
-                    _optional_text(provider_request_id, 200),
+                    _optional_text(command.turn.provider_name, 50),
+                    _optional_text(command.turn.provider_model, 200),
+                    _optional_text(
+                        command.turn.provider_request_id,
+                        200,
+                    ),
                     normalized_usage.input_tokens,
                     normalized_usage.output_tokens,
                     normalized_usage.total_tokens,
@@ -756,28 +890,73 @@ class SessionStore:
                     _iso(current),
                 ),
             )
-            if attachment_binder is not None:
-                attachment_binder(
+            if command.attachment_binding is not None:
+                self._bind_reserved_attachments(
                     connection,
-                    normalized_session_id,
-                    normalized_turn_id,
+                    command.attachment_binding,
+                    owner_id=normalized_owner_id,
+                    session_id=normalized_session_id,
+                    turn_id=normalized_turn_id,
+                    now=current,
                 )
             row = connection.execute(
-                "SELECT * FROM turns WHERE id = ?",
-                (normalized_turn_id,),
+                """
+                SELECT * FROM turns
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_turn_id, normalized_owner_id),
             ).fetchone()
         return _turn_from_row(_required_row(row))
 
-    def list_turns(self, session_id: str) -> list[TurnRecord]:
+    def bind_reserved_attachments(
+        self,
+        command: AttachmentBindingCommand,
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+        session_id: str,
+        turn_id: str,
+        now: datetime | None = None,
+    ) -> list[AttachmentRecord]:
+        normalized_owner_id = _uuid(owner_id)
         normalized_session_id = _uuid(session_id)
+        normalized_turn_id = _uuid(turn_id)
+        current = self._utc(now)
+        with self.transaction(immediate=True) as connection:
+            self._bind_reserved_attachments(
+                connection,
+                command,
+                owner_id=normalized_owner_id,
+                session_id=normalized_session_id,
+                turn_id=normalized_turn_id,
+                now=current,
+            )
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM attachments
+                WHERE owner_id = ? AND turn_id = ?
+                ORDER BY turn_position, id
+                """,
+                (normalized_owner_id, normalized_turn_id),
+            ).fetchall()
+        return [attachment_record_from_row(row) for row in rows]
+
+    def list_turns(
+        self,
+        session_id: str,
+        *,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
+    ) -> list[TurnRecord]:
+        normalized_session_id = _uuid(session_id)
+        normalized_owner_id = _uuid(owner_id)
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM turns
-                WHERE session_id = ?
+                WHERE session_id = ? AND owner_id = ?
                 ORDER BY created_at, id
                 """,
-                (normalized_session_id,),
+                (normalized_session_id, normalized_owner_id),
             ).fetchall()
         return [_turn_from_row(row) for row in rows]
 
@@ -794,10 +973,12 @@ class SessionStore:
         playbook_version: str | None = None,
         citations: Sequence[str] = (),
         error_category: str | None = None,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
         now: datetime | None = None,
         record_id: str | None = None,
     ) -> AuditRecord:
         normalized_session_id = _uuid(session_id)
+        normalized_owner_id = _uuid(owner_id)
         normalized_turn_id = _uuid(turn_id) if turn_id else None
         normalized_audit_id = _uuid(audit_id)
         normalized_record_id = _uuid(record_id)
@@ -809,17 +990,37 @@ class SessionStore:
         citations_json = _json([_required_text(ref, 200) for ref in citations])
 
         with self._connect() as connection:
-            self._require_active(connection, normalized_session_id, current)
+            self._require_active(
+                connection,
+                normalized_session_id,
+                normalized_owner_id,
+                current,
+            )
+            if normalized_turn_id is not None:
+                turn = connection.execute(
+                    """
+                    SELECT 1 FROM turns
+                    WHERE id = ? AND session_id = ? AND owner_id = ?
+                    """,
+                    (
+                        normalized_turn_id,
+                        normalized_session_id,
+                        normalized_owner_id,
+                    ),
+                ).fetchone()
+                if turn is None:
+                    raise SessionNotFoundError()
             connection.execute(
                 """
                 INSERT INTO audit_records (
-                    id, audit_id, session_id, turn_id, stage, status,
-                    duration_ms, playbook_id, playbook_version,
+                    id, owner_id, audit_id, session_id, turn_id, stage,
+                    status, duration_ms, playbook_id, playbook_version,
                     citations_json, error_category, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     normalized_record_id,
+                    normalized_owner_id,
                     normalized_audit_id,
                     normalized_session_id,
                     normalized_turn_id,
@@ -834,8 +1035,11 @@ class SessionStore:
                 ),
             )
             row = connection.execute(
-                "SELECT * FROM audit_records WHERE id = ?",
-                (normalized_record_id,),
+                """
+                SELECT * FROM audit_records
+                WHERE id = ? AND owner_id = ?
+                """,
+                (normalized_record_id, normalized_owner_id),
             ).fetchone()
         return _audit_from_row(_required_row(row))
 
@@ -844,19 +1048,21 @@ class SessionStore:
         *,
         audit_id: str | None = None,
         session_id: str | None = None,
+        owner_id: str = LOCAL_DEVELOPMENT_OWNER_ID,
     ) -> list[AuditRecord]:
         if (audit_id is None) == (session_id is None):
             raise ValueError("audit_id 和 session_id 必须且只能提供一个")
         field = "audit_id" if audit_id is not None else "session_id"
         value = _uuid(audit_id or session_id)
+        normalized_owner_id = _uuid(owner_id)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM audit_records
-                WHERE {field} = ?
+                WHERE {field} = ? AND owner_id = ?
                 ORDER BY created_at, id
                 """,
-                (value,),
+                (value, normalized_owner_id),
             ).fetchall()
         return [_audit_from_row(row) for row in rows]
 
@@ -1094,35 +1300,147 @@ class SessionStore:
         self,
         connection: sqlite3.Connection,
         session_id: str,
+        owner_id: str,
         now: datetime,
     ) -> None:
         self._purge(connection, now)
         row = connection.execute(
-            "SELECT 1 FROM sessions WHERE id = ?",
-            (session_id,),
+            """
+            SELECT 1 FROM sessions
+            WHERE id = ? AND owner_id = ?
+            """,
+            (session_id, owner_id),
         ).fetchone()
         if row is None:
             raise SessionNotFoundError()
+
+    def _bind_reserved_attachments(
+        self,
+        connection: sqlite3.Connection,
+        command: AttachmentBindingCommand,
+        *,
+        owner_id: str,
+        session_id: str,
+        turn_id: str,
+        now: datetime,
+    ) -> None:
+        self._require_active(connection, session_id, owner_id, now)
+        owned_turn = connection.execute(
+            """
+            SELECT 1 FROM turns
+            WHERE id = ? AND owner_id = ?
+            """,
+            (turn_id, owner_id),
+        ).fetchone()
+        if owned_turn is None:
+            raise SessionNotFoundError()
+
+        reservation_id = _uuid(command.reservation_id)
+        attachment_ids = tuple(
+            _uuid(attachment_id)
+            for attachment_id in command.attachment_ids
+        )
+        if not attachment_ids:
+            raise ValueError("至少需要一个附件 ID")
+        if len(attachment_ids) > 3:
+            raise ValueError("每轮最多绑定三个附件")
+        if len(attachment_ids) != len(set(attachment_ids)):
+            raise ValueError("附件 ID 不得重复")
+
+        existing_binding = connection.execute(
+            """
+            SELECT 1
+            FROM attachments
+            WHERE owner_id = ? AND turn_id = ?
+            LIMIT 1
+            """,
+            (owner_id, turn_id),
+        ).fetchone()
+        if existing_binding is not None:
+            raise AttachmentStateConflictError(
+                "attachment_already_bound"
+            )
+
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM attachments
+            WHERE owner_id = ? AND reservation_id = ?
+            ORDER BY turn_position, id
+            """,
+            (owner_id, reservation_id),
+        ).fetchall()
+        records = [attachment_record_from_row(row) for row in rows]
+        if tuple(record.id for record in records) != attachment_ids:
+            raise AttachmentStateConflictError(
+                "attachment_already_bound"
+            )
+
+        for position, record in enumerate(records):
+            if record.expires_at is not None and record.expires_at <= now:
+                raise AttachmentStateConflictError(
+                    "attachment_not_confirmed"
+                )
+            if (
+                record.status != "confirmed"
+                or record.turn_position != position
+            ):
+                raise AttachmentStateConflictError(
+                    "attachment_not_confirmed"
+                )
+            cursor = connection.execute(
+                """
+                UPDATE attachments
+                SET status = 'bound', session_id = ?, turn_id = ?,
+                    reservation_id = NULL, reserved_at = NULL,
+                    expires_at = NULL, updated_at = ?
+                WHERE id = ?
+                  AND owner_id = ?
+                  AND status = 'confirmed'
+                  AND reservation_id = ?
+                  AND turn_position = ?
+                """,
+                (
+                    session_id,
+                    turn_id,
+                    _iso(now),
+                    record.id,
+                    owner_id,
+                    reservation_id,
+                    position,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AttachmentStateConflictError(
+                    "attachment_already_bound"
+                )
 
     def _touch(
         self,
         connection: sqlite3.Connection,
         session_id: str,
+        owner_id: str,
         now: datetime,
     ) -> None:
         connection.execute(
             """
             UPDATE sessions
             SET updated_at = ?, expires_at = ?
-            WHERE id = ?
+            WHERE id = ? AND owner_id = ?
             """,
-            (_iso(now), _iso(now + self.ttl), session_id),
+            (
+                _iso(now),
+                _iso(now + self.ttl),
+                session_id,
+                owner_id,
+            ),
         )
 
 
 def _session_from_row(row: sqlite3.Row) -> SessionRecord:
     return SessionRecord(
         id=row["id"],
+        owner_id=row["owner_id"],
         scenario_id=row["scenario_id"],
         facts=_load_json(row["facts_json"], dict),
         followup_round=row["followup_round"],
@@ -1137,6 +1455,7 @@ def _session_from_row(row: sqlite3.Row) -> SessionRecord:
 def _session_list_from_row(row: sqlite3.Row) -> SessionListRecord:
     return SessionListRecord(
         id=row["id"],
+        owner_id=row["owner_id"],
         scenario_id=row["scenario_id"],
         status=row["status"],
         first_user_message=row["first_user_message"],
@@ -1149,6 +1468,7 @@ def _session_list_from_row(row: sqlite3.Row) -> SessionListRecord:
 def _turn_from_row(row: sqlite3.Row) -> TurnRecord:
     return TurnRecord(
         id=row["id"],
+        owner_id=row["owner_id"],
         session_id=row["session_id"],
         user_message=row["user_message"],
         facts=_load_json(row["facts_json"], dict),
@@ -1170,6 +1490,7 @@ def _turn_from_row(row: sqlite3.Row) -> TurnRecord:
 def _audit_from_row(row: sqlite3.Row) -> AuditRecord:
     return AuditRecord(
         id=row["id"],
+        owner_id=row["owner_id"],
         audit_id=row["audit_id"],
         session_id=row["session_id"],
         turn_id=row["turn_id"],
@@ -1310,3 +1631,47 @@ def _required_row(row: sqlite3.Row | None) -> sqlite3.Row:
     if row is None:
         raise RuntimeError("数据库写入后未返回记录")
     return row
+
+
+def _recheck_consultation_commit(
+    command: ConsultationCommitCommand,
+    latest: sqlite3.Row | None,
+) -> None:
+    from app.agent.progression import comparison_is_equivalent
+
+    guard_enabled = bool(command.comparison_units) or (
+        command.expected_latest_turn_id is not None
+    )
+    if not guard_enabled:
+        return
+
+    latest_id = str(latest["id"]) if latest is not None else None
+    expected_id = (
+        _uuid(command.expected_latest_turn_id)
+        if command.expected_latest_turn_id is not None
+        else None
+    )
+    if latest_id != expected_id:
+        if latest is not None:
+            try:
+                response = json.loads(latest["response_json"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                response = {}
+            if isinstance(response, Mapping) and comparison_is_equivalent(
+                command.comparison_units,
+                response,
+            ):
+                raise CaseNoProgressError()
+        raise ConsultationConflictError()
+
+    if latest is None or not command.comparison_units:
+        return
+    try:
+        response = json.loads(latest["response_json"])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return
+    if isinstance(response, Mapping) and comparison_is_equivalent(
+        command.comparison_units,
+        response,
+    ):
+        raise CaseNoProgressError()

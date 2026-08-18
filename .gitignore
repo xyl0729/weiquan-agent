@@ -26,3 +26,7 @@ htmlcov/
 .tmp/*
 !.tmp/.gitkeep
 .browser-test/
+.test-tmp/
+
+# Local scratch notes (contain server addresses and personal worklogs)
+timeoff*.md

@@ -2,3 +2,4 @@ tests/fixtures/attachments/*.pdf -text -diff
 tests/fixtures/attachments/*.png -text -diff
 tests/fixtures/attachments/*.jpg -text -diff
 tests/fixtures/attachments/*.jpeg -text -diff
+*.sh text eol=lf

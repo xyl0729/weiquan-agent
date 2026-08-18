@@ -15,6 +15,7 @@ from app.attachments.models import (
     AttachmentStatus,
     ExtractionBlock,
     ExtractionMethod,
+    normalize_confirmed_text,
 )
 
 
@@ -32,6 +33,7 @@ class SessionRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=36, max_length=36)
+    owner_id: str = Field(min_length=36, max_length=36)
     scenario_id: str | None = Field(default=None, max_length=100)
     facts: dict[str, Any] = Field(default_factory=dict)
     followup_round: int = Field(default=0, ge=0, le=2)
@@ -46,6 +48,7 @@ class SessionListRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=36, max_length=36)
+    owner_id: str = Field(min_length=36, max_length=36)
     scenario_id: str | None = Field(default=None, max_length=100)
     status: SessionStatus
     first_user_message: str = Field(min_length=1)
@@ -58,6 +61,7 @@ class TurnRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=36, max_length=36)
+    owner_id: str = Field(min_length=36, max_length=36)
     session_id: str = Field(min_length=36, max_length=36)
     user_message: str = Field(min_length=1)
     facts: dict[str, Any] = Field(default_factory=dict)
@@ -74,6 +78,7 @@ class AuditRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=36, max_length=36)
+    owner_id: str = Field(min_length=36, max_length=36)
     audit_id: str = Field(min_length=36, max_length=36)
     session_id: str = Field(min_length=36, max_length=36)
     turn_id: str | None = Field(default=None, min_length=36, max_length=36)
@@ -115,6 +120,7 @@ class AttachmentRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=36, max_length=36)
+    owner_id: str = Field(min_length=36, max_length=36)
     session_id: str | None = Field(default=None, min_length=36, max_length=36)
     turn_id: str | None = Field(default=None, min_length=36, max_length=36)
     turn_position: int | None = Field(default=None, ge=0, le=2)
@@ -143,19 +149,49 @@ class AttachmentRecord(BaseModel):
 
     @model_validator(mode="after")
     def record_is_consistent(self) -> "AttachmentRecord":
-        AttachmentReviewPublic(
-            id=self.id,
-            status=self.status,
-            original_name=self.original_name,
-            media_type=self.media_type,
-            size_bytes=self.size_bytes,
-            page_count=self.page_count,
-            extraction_method=self.extraction_method,
-            blocks=self.extracted_blocks,
-            warnings=self.warnings,
-            confirmed_text=self.confirmed_text,
-            error_code=self.error_code,
-        )
+        public_values = {
+            "id": self.id,
+            "status": self.status,
+            "original_name": self.original_name,
+            "media_type": self.media_type,
+            "size_bytes": self.size_bytes,
+            "page_count": self.page_count,
+            "extraction_method": self.extraction_method,
+            "blocks": self.extracted_blocks,
+            "warnings": self.warnings,
+            "confirmed_text": self.confirmed_text,
+            "error_code": self.error_code,
+        }
+        if (
+            self.status in {"review_required", "confirmed", "bound"}
+            and not self.extracted_blocks
+        ):
+            # PostgreSQL deliberately keeps unconfirmed OCR blocks out of
+            # the database. Validate common public fields separately, then
+            # enforce the durable extraction metadata below.
+            AttachmentReviewPublic(
+                **{
+                    **public_values,
+                    "status": "processing",
+                    "extraction_method": None,
+                    "confirmed_text": None,
+                    "error_code": None,
+                }
+            )
+            if self.page_count is None or self.extraction_method is None:
+                raise ValueError("已提取附件必须包含提取元数据")
+            if self.status == "review_required":
+                if (
+                    self.confirmed_text is not None
+                    or self.error_code is not None
+                ):
+                    raise ValueError("待核对附件不能包含确认文字或错误")
+            else:
+                normalize_confirmed_text(self.confirmed_text)
+                if self.error_code is not None:
+                    raise ValueError("已确认附件不能包含错误")
+        else:
+            AttachmentReviewPublic(**public_values)
 
         if self.status == "bound":
             if (
@@ -213,6 +249,7 @@ def attachment_record_from_row(row: sqlite3.Row) -> AttachmentRecord:
     warnings_data = _load_json_array(row["warnings_json"])
     return AttachmentRecord(
         id=row["id"],
+        owner_id=row["owner_id"],
         session_id=row["session_id"],
         turn_id=row["turn_id"],
         turn_position=row["turn_position"],
