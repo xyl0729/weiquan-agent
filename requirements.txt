@@ -1,14 +1,14 @@
 fastapi>=0.141.1,<0.142
-starlette>=1.3.1,<1.7
-uvicorn[standard]>=0.35.0,<0.36
+starlette>=1.6.0,<1.7
+uvicorn[standard]>=0.52.3,<0.53
 pydantic>=2.13.4,<2.14
-pydantic-settings>=2.14.2,<2.15
+pydantic-settings>=2.15.0,<2.16
 sqlmodel>=0.0.39,<0.0.40
-SQLAlchemy>=2.0.51,<2.1
-psycopg[binary]>=3.2.9,<4
-alembic>=1.16.4,<2
+SQLAlchemy>=2.0.52,<2.1
+psycopg[binary]>=3.3.4,<4
+alembic>=1.19.1,<2
 argon2-cffi>=25.1.0,<26
-email-validator>=2.2.0,<3
+email-validator>=2.3.0,<3
 cryptography>=50.0.0,<51
 # Newer DirectMail SDK releases require tea-openapi 0.4.x, which caps
 # cryptography below the first release that fixes all audited CVEs.
@@ -20,8 +20,8 @@ pyyaml>=6.0.3,<6.1
 jinja2>=3.1.6,<3.2
 python-dateutil>=2.9.0.post0,<2.10
 httpx>=0.28.1,<0.29
-python-multipart>=0.0.20,<0.1
-pypdf>=6.15.0,<7
-pypdfium2>=4.30.0,<5.0
+python-multipart>=0.0.32,<0.1
+pypdf>=6.16.1,<7
+pypdfium2>=5.13.0,<6.0
 Pillow>=12.3.0,<13
 rapidocr-onnxruntime>=1.4.4,<1.5
