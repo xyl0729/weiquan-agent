@@ -19,7 +19,6 @@ systemd、阿里云云监控或外部通知规则接收。
   正常拒绝单独计数。
 - 临时附件：目录不可读、扫描截断或最老文件超过 1 小时时告警。
 - 备份：`last-success.json` 缺失、无效或超过 36 小时时告警。
-- 小程序音频：配置 `AUDIO_PROBE_URL` 后检查一个无隐私的固定 MP3 探针。
 
 ## 默认阈值
 
@@ -62,7 +61,4 @@ docker inspect --format '{{.State.Status}} {{.RestartCount}}' \
 4. Provider 降级：暂停 DeepSeek 新调用并保留失败退还，不用 Fake Provider 替代。
 5. DirectMail 或已启用的 CAPTCHA 故障：只关闭依赖该集成的新注册/试用路径，
    不影响既有账号；验证码关闭时不依赖 CAPTCHA 服务。
-6. 小程序音频探针失败：检查独立 `audio` Nginx 日志和只读目录，避免重启维权应用
-   造成两个项目同时中断。
-
 每次处置记录时间、请求 ID、聚合错误类别、版本和动作，不记录用户内容。

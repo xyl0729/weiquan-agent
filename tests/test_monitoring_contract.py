@@ -87,6 +87,5 @@ def test_monitoring_runbook_has_thresholds_and_response_paths() -> None:
         "CAPTCHA",
         "临时附件",
         "关闭新咨询",
-        "小程序音频",
     ):
         assert marker in source

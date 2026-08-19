@@ -9,9 +9,7 @@
 }
 
 /var/log/nginx/weiquan.access.log
-/var/log/nginx/weiquan.error.log
-/var/log/nginx/audio.access.log
-/var/log/nginx/audio.error.log {
+/var/log/nginx/weiquan.error.log {
     daily
     rotate 14
     compress

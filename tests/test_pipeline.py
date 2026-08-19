@@ -580,7 +580,12 @@ def test_second_stage_circuit_trip_keeps_first_stage_and_local_answer(
 
 def test_tiny_shared_budget_keeps_local_answer_without_whole_turn_fallback(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "app.agent.pipeline.monotonic",
+        lambda: 100.0,
+    )
     provider = FakeProvider()
     pipeline, store = make_pipeline(
         tmp_path,

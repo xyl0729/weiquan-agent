@@ -1,6 +1,6 @@
 # 公开测试分阶段开放手册
 
-本手册用于在同一台 ECS 上逐步开放维权咨询站点，同时保持微信小程序音频站点独立可用。
+本手册用于在 ECS 上逐步开放维权咨询站点。
 生产应用只监听 `127.0.0.1:8001`，不得停止、复用或修改本机开发端口 `8000`。
 
 ## 配置开关
@@ -24,8 +24,7 @@
 进入任何公网观察前，逐项记录操作者、时间和结果：
 
 1. `072988.xyz` 的网站 ICP 备案已通过，DNS 指向当前 ECS。
-2. `weiquan.072988.xyz` 与 `audio.072988.xyz` 的 HTTPS、证书续期和独立 Nginx
-   日志均验证通过。
+2. `weiquan.072988.xyz` 的 HTTPS、证书续期和独立 Nginx 日志均验证通过。
 3. PostgreSQL 无宿主机公网端口，应用只绑定 `127.0.0.1:8001`。
 4. DirectMail 发信域和私有 OSS 权限验证通过；仅在
    `CAPTCHA_ENABLED=true` 时要求 CAPTCHA 场景验证通过。
@@ -33,7 +32,7 @@
    基础服务 RTO 不超过 4 小时。
 6. 全量测试、法条引用、召回、依赖审计、Docker 构建、迁移、故障矩阵、资源测试
    和浏览器验收全部通过。
-7. 两个并发咨询加一个 OCR 时无 OOM、持续 swap、反复重启或音频访问异常。
+7. 两个并发咨询加一个 OCR 时无 OOM、持续 swap 或反复重启。
 
 任一项没有证据时，保持 `ROLLOUT_STAGE=internal`。
 
@@ -71,7 +70,7 @@ python scripts/invite_user.py user@example.com --privacy-consent-recorded
 ```
 
 连续观察至少 7 天。每天核对跨用户访问事件、配额超发、容器重启、OOM、swap、磁盘、
-PostgreSQL、备份、邮件、OCR、DeepSeek 结果和两个子域名；验证码仅在启用时检查。
+PostgreSQL、备份、邮件、OCR、DeepSeek 结果和公网 HTTPS；验证码仅在启用时检查。
 要求磁盘持续低于 80%，且无跨用户事件、配额超发、备份失败或持续资源恶化。
 
 ## 阶段三：最小真实冒烟
@@ -103,5 +102,4 @@ CAPTCHA_ENABLED=false
 
 需要停止扩量时，将 `ROLLOUT_STAGE` 退回 `invited` 或 `internal`，并保持
 `PUBLIC_LAUNCH_APPROVED=false`。镜像或迁移故障按 `deployment-and-rollback.md`
-回滚；数据恢复按 `backup-and-restore.md` 执行。任何回退都不得影响
-`audio.072988.xyz` 的静态 MP3 目录和发布流程。
+回滚；数据恢复按 `backup-and-restore.md` 执行。

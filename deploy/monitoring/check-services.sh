@@ -3,7 +3,6 @@ set -Eeuo pipefail
 umask 077
 
 APP_BASE_URL="${APP_BASE_URL:-http://127.0.0.1:8001}"
-AUDIO_PROBE_URL="${AUDIO_PROBE_URL:-}"
 APP_CONTAINER="${APP_CONTAINER:-weiquan-app}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-weiquan-postgres}"
 DISK_PATH="${DISK_PATH:-/}"
@@ -209,12 +208,6 @@ else
     elif (( $(date -u +%s) - completed_epoch > BACKUP_MAX_AGE_SECONDS )); then
         issue "backup_stale"
     fi
-fi
-
-if [[ -n "$AUDIO_PROBE_URL" ]]; then
-    curl --fail --silent --show-error --head --max-time 10 \
-        "$AUDIO_PROBE_URL" >/dev/null 2>&1 \
-        || issue "audio_probe_failed"
 fi
 
 if ((${#issues[@]} > 0)); then

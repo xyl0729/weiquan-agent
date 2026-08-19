@@ -178,8 +178,8 @@ Provider 测试覆盖：
 ## 发布与回滚
 
 验证通过后构建唯一的新镜像标签，在生产服务器 `/srv/weiquan/current` 使用现有环境文件
-`/etc/weiquan/weiquan.env` 更新 `weiquan-app`。发布不得重建 `weiquan-postgres`，不得操作
-`/srv/audio` 或 `audio.072988.xyz`。
+`/etc/weiquan/weiquan.env` 更新 `weiquan-app`。发布不得重建 `weiquan-postgres`，也不得
+操作本项目以外的服务器服务。
 
 发布后检查容器健康状态、`/live`、`/ready`、公网 HTTPS、真实 DirectMail 验证码和一轮不含个人
 敏感信息的 DeepSeek 咨询。若健康检查或核心流程失败，只把应用容器回滚到上一固定镜像；数据库

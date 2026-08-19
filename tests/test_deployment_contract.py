@@ -190,24 +190,6 @@ def test_weiquan_nginx_is_https_only_and_hides_internal_routes() -> None:
     )
     assert "client_max_body_size 11m;" in source
     assert "weiquan.access.log" in source
-    assert "audio.access.log" not in source
-
-
-def test_audio_nginx_is_read_only_mp3_and_independently_logged() -> None:
-    source = _source(
-        ROOT / "deploy" / "nginx" / "audio.072988.xyz.conf"
-    )
-
-    assert source.count("server_name audio.072988.xyz;") == 2
-    assert "listen 443 ssl http2;" in source
-    assert "root /srv/audio;" in source
-    assert "autoindex off;" in source
-    assert "location ~* \\.mp3$" in source
-    assert "limit_except GET" in source
-    assert "try_files $uri =404;" in source
-    assert "audio.access.log" in source
-    assert "weiquan.access.log" not in source
-    assert "proxy_pass" not in source
 
 
 def test_deploy_and_rollback_are_ordered_pinned_and_content_free() -> None:

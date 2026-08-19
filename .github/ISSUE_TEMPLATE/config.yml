@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 私下报告安全漏洞
+    url: https://github.com/xyl0729/weiquan-agent/security/advisories/new
+    about: 越权、秘密泄露和可利用漏洞请不要公开提交。
+  - name: 在线体验
+    url: https://weiquan.072988.xyz
+    about: 无需注册即可体验公开服务。

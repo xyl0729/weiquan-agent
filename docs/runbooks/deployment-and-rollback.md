@@ -9,15 +9,14 @@
 
 在服务器发布前，必须确认：
 
-- 网站 ICP 备案已经通过，两个子域名 DNS 已指向服务器。
-- `weiquan.072988.xyz` 和 `audio.072988.xyz` 均已取得有效 HTTPS 证书。
+- 网站 ICP 备案已经通过，`weiquan.072988.xyz` 的 DNS 已指向服务器。
+- `weiquan.072988.xyz` 已取得有效 HTTPS 证书。
 - `/etc/weiquan/weiquan.env` 已由服务器管理员创建，权限为 `0600`，不进入仓库。
 - DirectMail、私有 OSS、DeepSeek 和 `age` 备份接收者配置已完成。
 - 当前发布显式设置 `CAPTCHA_ENABLED=false`。只有以后主动改为 `true` 时，才需要
   配置并验证 CAPTCHA 场景 ID 和前缀。
 - `data/seed_statutes.yaml` 和召回基准已随代码检出；CI 与镜像构建中的法条引用、
   召回门禁均已通过。生成的 `data/statutes.db` 只存在于镜像内且保持只读。
-- `/srv/audio` 由小程序音频发布流程管理；维权应用容器不得写入该目录。
 - 已完成隔离恢复演练。真实 DeepSeek 冒烟仍需用户再次明确批准。
 
 `/etc/weiquan/weiquan.env` 至少提供生产 `Settings` 所要求的字段、数据库初始化
@@ -37,7 +36,6 @@ sudo install -d -o 10001 -g 10001 -m 0700 \
   /srv/weiquan/logs
 sudo install -d -o root -g root -m 0750 \
   /srv/weiquan/release-state
-sudo install -d -o root -g root -m 0755 /srv/audio
 ```
 
 systemd 单元使用稳定路径 `/srv/weiquan/current`。从待发布代码的仓库根目录创建
@@ -52,16 +50,14 @@ sudo systemctl daemon-reload
 sudo logrotate --debug /etc/logrotate.d/weiquan
 ```
 
-两个 Nginx 配置直接引用正式证书路径，因此首次签发证书前不要启用它们。先用
+Nginx 配置直接引用正式证书路径，因此首次签发证书前不要启用它。先用
 Certbot 的临时 HTTP/ACME 配置完成证书签发，再安装并启用正式配置：
 
 ```bash
 sudo install -m 0644 deploy/nginx/weiquan.072988.xyz.conf \
-  deploy/nginx/audio.072988.xyz.conf /etc/nginx/sites-available/
+  /etc/nginx/sites-available/
 sudo ln -sfn /etc/nginx/sites-available/weiquan.072988.xyz.conf \
   /etc/nginx/sites-enabled/weiquan.072988.xyz.conf
-sudo ln -sfn /etc/nginx/sites-available/audio.072988.xyz.conf \
-  /etc/nginx/sites-enabled/audio.072988.xyz.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -158,5 +154,5 @@ sudo /usr/bin/bash deploy/scripts/rollback.sh
 
 以下任一情况都必须停止发布或扩量：备份失败、迁移失败、`/ready` 非 200、
 PostgreSQL 重启、持续 swap/OOM、磁盘达到 80%、出现跨用户访问、配额超发、
-音频子域不可用或 Nginx 5xx 持续升高。保留无内容的时间、镜像版本、请求 ID 和
+Nginx 5xx 持续升高。保留无内容的时间、镜像版本、请求 ID 和
 错误类别，禁止记录密码、令牌、用户正文、OCR 文本或文件名。

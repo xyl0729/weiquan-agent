@@ -1,0 +1,65 @@
+name: 缺陷报告
+description: 报告可复现的软件行为问题，请勿提交真实用户数据或密钥。
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。安全漏洞请改用仓库 Security 页面私下报告。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题概述
+      description: 简洁说明实际发生了什么。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 使用虚构数据给出最小、稳定的复现步骤。
+      placeholder: |
+        1. 启动本地服务
+        2. 输入虚构问题……
+        3. 观察到……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      placeholder: v0.1.0 或 commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 运行环境
+      options:
+        - Windows 本地
+        - macOS 本地
+        - Linux 本地
+        - Docker / 生产部署
+        - 在线体验站
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏日志或截图
+      description: 可选。删除账号、Cookie、Token、Key、用户正文、附件文字和文件名。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我确认报告中不含真实纠纷材料、个人信息、认证信息或密钥。
+          required: true

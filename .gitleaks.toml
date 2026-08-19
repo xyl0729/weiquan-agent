@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "PostgreSQL APT signing-key SHA-256 checksum"
+regexTarget = "secret"
+regexes = [
+  '''^0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76$''',
+]

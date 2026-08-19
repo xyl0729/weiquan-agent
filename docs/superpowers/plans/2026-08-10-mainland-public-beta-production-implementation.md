@@ -20,7 +20,7 @@
 - 所有注册用户资源由服务端会话派生的 `user_id` 约束，不接受客户端所有者字段。
 - 原始附件和未确认 OCR 文字只在私有临时目录短暂存在；只有确认文字可以持久化。
 - 公开用户只能调用 DeepSeek，`FakeProvider` 只用于本地测试依赖注入。
-- 一台 2 核、2 GiB ECS 同时承载维权 Agent 和小程序音频，但使用独立子域名和资源边界。
+- 一台 2 核、2 GiB ECS 承载维权 Agent，并保持严格的应用与数据库资源边界。
 - 未完成 ICP、HTTPS、邮件、验证码、恢复演练和经用户批准的真实 DeepSeek 冒烟前，
   不开放公网注册。
 
@@ -572,7 +572,6 @@ node --check app/web/js/app.js
 - 新增 `deploy/compose.production.yml`
 - 新增 `deploy/postgres/postgresql.conf`
 - 新增 `deploy/nginx/weiquan.072988.xyz.conf`
-- 新增 `deploy/nginx/audio.072988.xyz.conf`
 - 新增 `deploy/scripts/preflight.sh`
 - 新增 `deploy/scripts/deploy.sh`
 - 新增 `deploy/scripts/rollback.sh`
@@ -588,8 +587,7 @@ node --check app/web/js/app.js
   PostgreSQL 内存上限 512 MiB。
 - PostgreSQL 参数为 `max_connections=20`、`shared_buffers=128MB`、
   `work_mem=4MB`、`maintenance_work_mem=64MB`。
-- Nginx 把 `weiquan.072988.xyz` 代理到 `8001`，把 `audio.072988.xyz` 限定为
-  MP3 只读静态目录；两个 server block 的日志和缓存规则互相独立。
+- Nginx 把 `weiquan.072988.xyz` 代理到 `8001`，并阻止公网访问内部管理路由。
 - PostgreSQL、附件目录和内部管理端口均不可公网访问。
 - 发布前迁移和备份失败时不切换镜像；健康检查失败可切回上一固定版本镜像。
 - 自动冒烟只使用 Fake 外部集成或只读检查，不调用真实 DeepSeek。
@@ -598,7 +596,7 @@ node --check app/web/js/app.js
 
 - 构建固定 Python 3.11 镜像，使用非 root 用户、只读应用代码和独立可写临时卷。
 - Compose 引用服务器受控配置路径，不在仓库创建秘密文件。
-- 宿主机 Nginx 终止 HTTPS；音频目录由小程序发布流程原子重命名，不进入应用容器。
+- 宿主机 Nginx 终止 HTTPS，应用容器只绑定宿主机回环地址。
 - 部署顺序固定为预检、发布前加密备份、迁移、启动新镜像、存活/就绪检查、切换；
   回滚不触碰本地 `8000` 服务。
 
@@ -680,9 +678,9 @@ git diff --check
 
 **开放顺序**
 
-1. ICP 备案、DNS、两个 HTTPS 站点、DirectMail、CAPTCHA、私有 OSS、恢复演练、
+1. ICP 备案、DNS、HTTPS、DirectMail、CAPTCHA、私有 OSS、恢复演练、
    PostgreSQL 非公网和资源测试全部通过。
-2. 内部账号验证登录、配额、附件、删除、监控和小程序音频互不影响。
+2. 内部账号验证登录、配额、附件、删除和监控流程。
 3. 邀请 10 人连续观察 7 天；要求无跨用户事件、无配额超发、无 OOM、无备份失败，
    容器不反复重启，磁盘低于 80%，错误率和 swap 无持续恶化。
 4. 用户再次明确批准后，只执行一次最小真实 DeepSeek 冒烟，核对 Provider、模型、
@@ -711,6 +709,6 @@ git diff --check
 - 30 天内容、14 天日志、最长 28 天备份和 35 天删除清单保留期可验证。
 - 每日加密备份、删除清单重放和每月隔离恢复演练可重复执行。
 - 恢复演练证明恢复点不超过 24 小时，且基础服务恢复时间不超过 4 小时。
-- 同一 ECS 上两个子域名稳定，两个咨询和一个 OCR 不触发 OOM。
+- 同一 ECS 上两个咨询和一个 OCR 不触发 OOM。
 - 全量离线测试、迁移、依赖审计、浏览器验收、故障矩阵和资源测试全部通过。
 - 只有在全部公网门槛满足且用户明确批准真实冒烟后，才开放受控公测。
