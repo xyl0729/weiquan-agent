@@ -11,6 +11,12 @@ updates:
       python-dependencies:
         patterns:
           - "*"
+    ignore:
+      # Newer Aliyun SDK releases cap cryptography below this project's
+      # audited >=50 security floor. Upgrade these SDK pins together only
+      # after the upstream constraint is compatible.
+      - dependency-name: alibabacloud-dm20151123
+      - dependency-name: alibabacloud-tea-openapi
     open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
