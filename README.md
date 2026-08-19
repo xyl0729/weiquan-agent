@@ -6,7 +6,7 @@
   <a href="https://github.com/xyl0729/weiquan-agent/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/xyl0729/weiquan-agent/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/xyl0729/weiquan-agent?label=License"></a>
   <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white">
-  <a href="https://weiquan.072988.xyz"><img alt="在线服务" src="https://img.shields.io/website?url=https%3A%2F%2Fweiquan.072988.xyz&label=%E5%9C%A8%E7%BA%BF%E6%9C%8D%E5%8A%A1"></a>
+  <a href="https://weiquan.072988.xyz"><img alt="在线体验" src="https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-%E6%89%93%E5%BC%80-2ea44f"></a>
 </p>
 
 **[立即在线体验](https://weiquan.072988.xyz)** · [快速启动](#快速启动) ·
