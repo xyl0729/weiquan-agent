@@ -1,0 +1,179 @@
+[
+ {
+  "message": "在小区里被邻居家的狗咬了",
+  "label": "misleading",
+  "expect": "personal_injury",
+  "surface": "property_neighbor",
+  "candidate_topic_id": "personal_injury",
+  "confidence": 0.9,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "租的房子里我自己不小心把门弄坏了，房东要我赔",
+  "label": "misleading",
+  "expect": "general_rental",
+  "surface": "general_rental",
+  "candidate_topic_id": "general_rental",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": 4,
+  "explicit_match": "general_rental",
+  "correct": true
+ },
+ {
+  "message": "开的是朋友的车，出了事故对方要我全赔",
+  "label": "misleading",
+  "expect": "traffic_accident",
+  "surface": "traffic_accident",
+  "candidate_topic_id": "traffic_accident",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "在公司楼梯上摔伤了，公司说不算工伤",
+  "label": "misleading",
+  "expect": "wage_social_insurance",
+  "surface": "personal_injury",
+  "candidate_topic_id": "personal_injury",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": false
+ },
+ {
+  "message": "上班时间被同事打了",
+  "label": "misleading",
+  "expect": "personal_injury",
+  "surface": "workplace_harassment",
+  "candidate_topic_id": "personal_injury",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "美容院办的卡，做完脸过敏了",
+  "label": "misleading",
+  "expect": "service_contract",
+  "surface": "medical_service_dispute",
+  "error": "ProviderOutputError: 模型返回格式无效"
+ },
+ {
+  "message": "网上买的药吃了不舒服",
+  "label": "misleading",
+  "expect": "logistics_travel_food",
+  "surface": "medical_service_dispute",
+  "candidate_topic_id": "logistics_travel_food",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "房东把我押金转给了二房东，现在两个人互相推",
+  "label": "misleading",
+  "expect": "general_rental",
+  "surface": "debt_collection",
+  "error": "ProviderOutputError: 模型返回格式无效"
+ },
+ {
+  "message": "学校门口被电动车撞了，学校说不管",
+  "label": "misleading",
+  "expect": "traffic_accident",
+  "surface": "education_minor_safety",
+  "candidate_topic_id": "education_minor_safety",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "candidate_score": 4,
+  "explicit_match": "education_minor_safety",
+  "correct": false
+ },
+ {
+  "message": "催收的人把我欠钱的事告诉了我父母",
+  "label": "misleading",
+  "expect": "debt_collection",
+  "surface": "privacy_reputation",
+  "candidate_topic_id": "debt_collection",
+  "confidence": null,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "前妻不让我见孩子",
+  "label": "misleading",
+  "expect": "family_support_property",
+  "surface": "family_support_property",
+  "candidate_topic_id": "family_support_property",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "游戏里买的装备卖家收钱不发货",
+  "label": "misleading",
+  "expect": "game_account_dispute",
+  "surface": "logistics_travel_food",
+  "candidate_topic_id": "game_account_dispute",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "装修公司干了一半跑了，钱付了七成",
+  "label": "misleading",
+  "expect": "service_contract",
+  "surface": "renovation_default",
+  "error": "ProviderOutputError: 模型返回格式无效"
+ },
+ {
+  "message": "医院开的药太贵了，我觉得是乱收费",
+  "label": "misleading",
+  "expect": "medical_service_dispute",
+  "surface": "medical_service_dispute",
+  "candidate_topic_id": "medical_service_dispute",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "外卖员把我的餐洒了还骂我",
+  "label": "misleading",
+  "expect": "logistics_travel_food",
+  "surface": "privacy_reputation",
+  "candidate_topic_id": "logistics_travel_food",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ },
+ {
+  "message": "领导以绩效为名扣了我三个月工资",
+  "label": "misleading",
+  "expect": "wage_social_insurance",
+  "surface": "labor_termination",
+  "candidate_topic_id": "wage_social_insurance",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "candidate_score": 0,
+  "explicit_match": null,
+  "correct": true
+ }
+]

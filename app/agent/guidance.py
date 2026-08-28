@@ -10,6 +10,7 @@ from app.agent.models import (
     RiskFlag,
 )
 from app.agent.routing import is_unknown_fact_placeholder
+from app.retrieval.expansion import infer_topic
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,19 +304,59 @@ _EMERGENCY_FIRST_ACTION: dict[RiskFlag, str] = {
 }
 
 
+
+# 路由定不出主题时写入 topic_id 的哨兵值，同时也是兜底档案的键。
+_UNKNOWN_TOPIC = "unknown"
+
+
+def _select_profile(
+    coverage: CoverageResult,
+    message: str,
+) -> _GuidanceProfile:
+    """选主题档案，topic_id 认不出时用消息本身再推断一次。
+
+    _PROFILES 里 16 套档案的键与 infer_topic 的返回值域一一对应
+    （也与 GENERAL_BASIS_REFS 的键一致），所以路由没定出主题时，
+    直接拿消息问 infer_topic 就能落到已有档案上，不需要另写兜底文案。
+
+    只在路由没定出主题时才推断：路由已经识别出主题的轮次不应被触发词
+    覆盖，那是路由的判断，比单句触发词看得全。
+
+    注意 "unknown" 本身就是 _PROFILES 的一个键，判定不能写成
+    `_PROFILES.get(topic_id) is not None`——那样 topic_id="unknown"
+    会直接命中兜底档案并返回，infer_topic 永远不会被调用。
+    第一版就是这么写的，904 个测试全绿但档案一个都没变，
+    是实测探针发现的。
+
+    背景：甲醛案的 topic_id 至今是 unknown，法条靠 infer_topic 兜底
+    才拿到，但 recipient/objective/escalation 仍走通用档案——同一条
+    消息在依据侧被认成租赁纠纷、在文案侧却当作不明主题。这里补的是
+    这个不一致。
+    """
+    if coverage.topic_id != _UNKNOWN_TOPIC:
+        profile = _PROFILES.get(coverage.topic_id)
+        if profile is not None:
+            return profile
+    if message:
+        inferred = infer_topic(message)
+        if inferred is not None:
+            fallback = _PROFILES.get(inferred)
+            if fallback is not None:
+                return fallback
+    return _PROFILES[_UNKNOWN_TOPIC]
+
+
 class GuidanceBuilder:
     def build(
         self,
         coverage: CoverageResult,
         *,
         facts: dict[str, Any],
+        message: str = "",
     ) -> GuidanceResult:
         if coverage.mode == "formal":
             raise ValueError("正式覆盖应由 Playbook 构建方案")
-        profile = _PROFILES.get(
-            coverage.topic_id,
-            _PROFILES["unknown"],
-        )
+        profile = _select_profile(coverage, message)
         if coverage.mode == "emergency_guidance":
             return self._emergency(coverage, profile, facts)
         return self._unverified(coverage, profile, facts)
@@ -325,15 +366,13 @@ class GuidanceBuilder:
         coverage: CoverageResult,
         *,
         stage: int,
+        message: str = "",
     ) -> GuidanceProgress:
         if coverage.mode != "unverified_guidance":
             raise ValueError("阶段推进只适用于未核验主题")
         if not 1 <= stage <= 7:
             raise ValueError("未核验主题阶段必须在 1 到 7 之间")
-        profile = _PROFILES.get(
-            coverage.topic_id,
-            _PROFILES["unknown"],
-        )
+        profile = _select_profile(coverage, message)
         if stage == 1:
             return GuidanceProgress(
                 stage=stage,
@@ -509,11 +548,19 @@ def _communication_guide(
         opening = f"您好，我想书面反映一项与“{coverage.topic_label}”相关的情况。"
         objective = profile.objective
         when_to_send = "整理好现有时间线和原始材料后尽快发送"
-    message = (
-        f"{opening}{detail_sentence}"
-        f"我的当前请求是：{_safe_request(facts, objective)}。"
-        "请确认收到，并以书面方式告知处理联系人、预计时间和下一步安排。"
-    )
+    stated_request = _render_fact(facts.get("request"))
+    if stated_request:
+        # 用户说明了自己的诉求时，正文提出该诉求，再单独请对方书面回复。
+        message = (
+            f"{opening}{detail_sentence}"
+            f"我的当前请求是：{stated_request}。"
+            "请确认收到，并以书面方式告知处理联系人、预计时间和"
+            "下一步安排。"
+        )
+    else:
+        # 没有明确诉求时，objective 本身就是「请对方确认收到并告知安排」，
+        # 再加固定尾句会在同一段里重复两次，因此只保留一句。
+        message = f"{opening}{detail_sentence}我的当前请求是：{objective}。"
     return CommunicationGuide(
         recipient=profile.recipient,
         channels=list(profile.channels),
@@ -545,11 +592,6 @@ def _confirmed_details(facts: dict[str, Any]) -> list[str]:
         if rendered:
             details.append(f"{label}为{rendered}")
     return details
-
-
-def _safe_request(facts: dict[str, Any], fallback: str) -> str:
-    value = _render_fact(facts.get("request"))
-    return value or fallback
 
 
 def _render_fact(value: Any) -> str:

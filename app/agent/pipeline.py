@@ -56,6 +56,7 @@ from app.agent.guidance import GuidanceBuilder
 from app.agent.models import (
     CaseContinuationContext,
     CaseContinuationResult,
+    CommunicationGuide,
     CoverageResult,
     ExtractionResult,
     GuidanceResult,
@@ -121,6 +122,7 @@ from app.retrieval.database import (
     get_metadata,
     get_statute_by_ref,
 )
+from app.retrieval.expansion import infer_topic
 
 
 PipelineStatus = Literal["need_more_facts", "ready", "escalate"]
@@ -585,6 +587,7 @@ class ConsultationPipeline:
                     facts=run.session.facts,
                     provider=provider,
                     turns=turns,
+                    message=normalized_message,
                     extraction=extraction,
                 )
                 run.finish()
@@ -1009,6 +1012,7 @@ class ConsultationPipeline:
                 facts=run.session.facts,
                 provider=provider,
                 turns=run.turns,
+                message=message,
             )
             preserve_session_state = run.playbook is not None
         else:
@@ -1036,6 +1040,7 @@ class ConsultationPipeline:
                 fallback_guidance = self.guidance_builder.build(
                     coverage,
                     facts=self._guidance_facts(run.session.facts),
+                    message=message,
                 )
                 actions = fallback_guidance.actions
                 evidence_targets = fallback_guidance.evidence_now
@@ -1107,6 +1112,7 @@ class ConsultationPipeline:
                 fallback_guidance = self.guidance_builder.build(
                     coverage,
                     facts=self._guidance_facts(run.session.facts),
+                    message=message,
                 )
                 fallback_guidance = fallback_guidance.model_copy(
                     update={
@@ -1215,6 +1221,7 @@ class ConsultationPipeline:
             guidance = self.guidance_builder.build(
                 coverage,
                 facts=self._guidance_facts(run.session.facts),
+                message=message,
             )
             if guidance.next_question is not None:
                 return guidance.next_question
@@ -1831,6 +1838,7 @@ class ConsultationPipeline:
                 artifacts.evaluation.key_point,
             ),
             turn_intent=extraction.turn_intent,
+            letter=artifacts.draft.plan.communication_guide,
         )
         grounded = build_local_answer(packet)
         grounded, usage, request_id = await self._compose_grounded_answer(
@@ -1845,8 +1853,17 @@ class ConsultationPipeline:
             base_request_id=extraction.request_id,
         )
 
+        # communication_text 必须与 guide.message 逐字一致：前端
+        # api.js 把两者不等视为契约破坏并拒绝整个响应，因此这里
+        # 先算出唯一的正文，再同时写入两个字段。
+        letter = self._grounded_letter(
+            artifacts.draft.plan.communication_guide,
+            grounded,
+        )
         plan = artifacts.draft.plan.model_copy(
             update={
+                "communication_guide": letter,
+                "communication_text": letter.message,
                 "summary": self._grounded_text(grounded)[:1000],
                 "evidence_now": [
                     EvidenceItem(order=index, text=text)
@@ -2300,6 +2317,7 @@ class ConsultationPipeline:
         next_question: str | None = None,
         formal_findings: Sequence[str] = (),
         turn_intent: str | None = None,
+        letter: CommunicationGuide | None = None,
     ) -> GroundingPacket:
         intent = turn_intent or classify_turn_intent(message)
         recent_messages = [
@@ -2349,6 +2367,12 @@ class ConsultationPipeline:
             )
             for statute in statutes
         ]
+        # 正文三字段来自已构建好的模板 guide：收件人和沟通目标作为改写红线，
+        # message 作为草稿。模型只能在草稿基础上重写，不能凭空生成正文，
+        # 因此 letter 缺失时三者一并为 None，_merged_letter 会拒绝任何正文。
+        letter_recipient = letter.recipient if letter is not None else None
+        letter_objective = letter.objective if letter is not None else None
+        letter_draft = letter.message if letter is not None else None
         return GroundingPacket(
             current_message=message,
             turn_intent=intent,  # type: ignore[arg-type]
@@ -2367,6 +2391,9 @@ class ConsultationPipeline:
             previously_answered=previous_units,
             one_allowed_next_question=next_question,
             direct_answer_draft=direct_answer,
+            letter_recipient=letter_recipient,
+            letter_objective=letter_objective,
+            letter_draft=letter_draft,
         )
 
     @staticmethod
@@ -2420,6 +2447,23 @@ class ConsultationPipeline:
     def _grounded_text(draft: GroundedAnswerDraft) -> str:
         parts = [draft.direct_reply, *draft.legal_explanation]
         return "\n\n".join(part for part in parts if part).strip()[:1200]
+
+    @staticmethod
+    def _grounded_letter(
+        template: CommunicationGuide,
+        draft: GroundedAnswerDraft,
+    ) -> CommunicationGuide:
+        """用模型改写后的正文替换模板正文，其余字段一律保持模板值。
+
+        draft.letter_body 已经过 merge_grounded_answer 的正文校验（禁止代
+        对方许诺义务、禁止替用户放弃权利、收件人不得被改写），到这里只需
+        决定是否替换。模型未给正文或校验后为空时保留模板，保证正文永远
+        可用，不会因为模型缺字段而变空。
+        """
+        letter = draft.letter_body
+        if letter is None or not letter.strip():
+            return template
+        return template.model_copy(update={"message": letter.strip()})
 
     @staticmethod
     def _grounded_followup_text(draft: GroundedAnswerDraft) -> str:
@@ -2493,11 +2537,13 @@ class ConsultationPipeline:
         base_guidance = self.guidance_builder.build(
             coverage,
             facts=self._guidance_facts(session.facts),
+            message=message,
         )
         if extraction.turn_intent == "completed_action":
             progress = self.guidance_builder.build_unverified_stage(
                 coverage,
                 stage=stage,
+                message=message,
             )
             actions = [progress.action]
             next_question = progress.next_question
@@ -2582,6 +2628,7 @@ class ConsultationPipeline:
         facts: dict[str, Any],
         provider: LLMProvider,
         turns: Sequence[TurnRecord],
+        message: str = "",
         extraction: ExtractionResult | None = None,
     ) -> PipelineResult:
         previous_risk = next(
@@ -2612,6 +2659,7 @@ class ConsultationPipeline:
                 coverage=coverage,
                 facts=facts,
                 provider=provider,
+                message=message,
                 extraction=extraction,
             )
 
@@ -2797,11 +2845,13 @@ class ConsultationPipeline:
         coverage: CoverageResult,
         facts: dict[str, Any],
         provider: LLMProvider,
+        message: str = "",
         extraction: ExtractionResult | None = None,
     ) -> PipelineResult:
         guidance = self.guidance_builder.build(
             coverage,
             facts=facts,
+            message=message,
         )
         if (
             extraction is not None
@@ -2867,7 +2917,11 @@ class ConsultationPipeline:
         usage_controls: ProviderUsageControls | None,
         extraction: ExtractionResult,
     ) -> PipelineResult:
-        guidance = self.guidance_builder.build(coverage, facts=facts)
+        guidance = self.guidance_builder.build(
+            coverage,
+            facts=facts,
+            message=message,
+        )
         run.begin("retrieval")
         try:
             statutes = self._retrieve_general_statutes(
@@ -2893,6 +2947,7 @@ class ConsultationPipeline:
             direct_answer=extraction.bounded_answer,
             next_question=guidance.next_question,
             turn_intent=extraction.turn_intent,
+            letter=guidance.communication_guide,
         )
         draft = build_local_answer(packet)
         draft, usage, request_id = await self._compose_grounded_answer(
@@ -2914,6 +2969,10 @@ class ConsultationPipeline:
                 "evidence_now": draft.evidence,
                 "limitations": draft.limitations,
                 "next_question": draft.next_question,
+                "communication_guide": self._grounded_letter(
+                    guidance.communication_guide,
+                    draft,
+                ),
             }
         )
         run.begin("followup")
@@ -3152,9 +3211,24 @@ class ConsultationPipeline:
             recent_messages.append(message)
         basis_context = "；".join(recent_messages)[-4000:]
         refs = general_basis_refs(topic_id, basis_context)
-        if not refs:
+        if refs:
+            return self._retrieve_statutes_by_refs(refs)
+        # 精选映射没有覆盖这个主题（topic_id 落到 unknown 时必然如此）。
+        # 原先这里直接返回空，用户拿不到任何法条——甲醛这类问题就是这样
+        # 一条依据都没有。改为按口语触发词推断主题，再取该主题下人工
+        # 确认过的条文。
+        #
+        # 这里特意不让 BM25 直接挑条文：实测检索分数无法区分条文立场，
+        # 甲醛案中对用户不利的第七百一十一条拿到 50.19 分，而正确的
+        # 第七百一十三条只有 25.46，任何阈值都会连正确条文一起挡掉。
+        # 推断主题只回答「这是哪类纠纷」，条文仍由精选映射决定。
+        inferred = infer_topic(basis_context)
+        if inferred is None or inferred == topic_id:
             return []
-        return self._retrieve_statutes_by_refs(refs)
+        fallback_refs = general_basis_refs(inferred, basis_context)
+        if not fallback_refs:
+            return []
+        return self._retrieve_statutes_by_refs(fallback_refs)
 
     def _retrieve_statutes_by_refs(
         self,

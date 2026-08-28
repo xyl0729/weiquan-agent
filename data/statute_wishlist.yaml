@@ -1,0 +1,124 @@
+# 待录入法条清单。
+#
+# 这个文件只记录「案情需要、但已核验法条库里还没有」的条文，供人工
+# 从全国人大法律法规数据库逐条录入核验。它本身不是法条数据：这里
+# 没有正文字段，也不会被 ingest_statutes.py 读取，因此不可能绕过
+# 人工核验直接进库。
+#
+# 为什么需要单独一份清单：扫描代码找不出这类缺口。缺失的条文正因为
+# 不在库里，代码也就无从引用——实测代码和 playbook 引用的 80 条全部
+# 在库，缺失为 0，而甲醛案真正需要的民法典第七百三十一条压根没被
+# 任何代码提到。缺口只能从案情反推，所以逐条写明是哪个案情需要它。
+#
+# 字段说明：
+#   ref              目标引用，格式与 GENERAL_BASIS_REFS 一致
+#   law_name         法律全称，录入时用于核对详情页标题
+#   source_url       全国人大法律法规数据库该法规的官方详情页
+#   why              哪个案情需要它，缺了会怎样
+#   current_fallback 目前实际给出的条文，以及它为什么只是次优解
+#   topic            录入后应挂到哪个主题（GENERAL_BASIS_REFS 的键）
+
+statutes:
+  - ref: 民法典.第七百三十一条
+    law_name: 中华人民共和国民法典
+    source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+    topic: general_rental
+    why: >-
+      甲醛超标、霉变、漏水等居住条件危及健康的租房纠纷。本条规定租赁物
+      危及承租人安全或健康时，承租人可以随时解除合同，这是这类案情里
+      对用户最有力的依据——它给的是「可以直接解约搬走」。
+    current_fallback: >-
+      民法典.第七百一十三条（承租人可请求出租人在合理期限内维修）。
+      方向对但力度弱：只能要求对方修，不能解约止损。用户已经头痛咳嗽
+      还得继续住着等维修，这不是他真正需要的答案。
+
+  - ref: 民法典.第七百二十九条
+    law_name: 中华人民共和国民法典
+    source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+    topic: general_rental
+    why: >-
+      房屋部分或全部无法居住（如长期漏水、断水断电、被查封）且不是
+      承租人的责任时，承租人可以请求减少租金或者不支付租金。租房类
+      咨询里「还要不要继续交租」是高频问题，目前没有任何条文能回答。
+    current_fallback: >-
+      无。目前只能给民法典第五百零九条这类合同通则，答不了减租问题。
+
+  - ref: 民法典.第七百零三条
+    law_name: 中华人民共和国民法典
+    source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+    topic: general_rental
+    why: >-
+      租赁合同的定义条款。判断二房东转租、口头租房、合同未签字等情形
+      是否成立租赁关系时的起点。目前 general_rental 仅有第五百零九条
+      一条通则，连「这算不算租赁关系」都无从说起。
+    current_fallback: >-
+      无。
+
+  - ref: 民法典.第七百二十一条
+    law_name: 中华人民共和国民法典
+    source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+    topic: general_rental
+    why: >-
+      租金支付期限的推定规则。房东临时要求提前交租、变更交租周期，
+      或双方对交租时间各说各话时需要本条。
+    current_fallback: >-
+      无。
+
+  - ref: 民法典.第七百三十四条
+    law_name: 中华人民共和国民法典
+    source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+    topic: general_rental
+    why: >-
+      第一款：租赁期限届满后承租人继续使用租赁物、出租人未提出异议的，
+      原合同继续有效但转为不定期。回答的是「到期了房东突然赶我走」——
+      只要人还住着且此前无异议，合同并未随期限自动终止。
+    current_fallback: >-
+      无。已入库并接线（_RENTAL_HOLDOVER_MARKERS）。
+      注意入库正文只有第一款，第二款的缺口另见下一条。
+
+  - ref: 民法典.第七百三十四条第二款
+    law_name: 中华人民共和国民法典
+    source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+    topic: general_rental
+    why: >-
+      房屋承租人在租期届满时以同等条件优先承租的权利。到期后房东把房子
+      转租给别人、或涨价逼走原租客再对外出租的纠纷需要本款。
+      这条单列是因为库内第七百三十四条只录了第一款，而工具按 ref 判定
+      是否已入库——不单列的话，「第七百三十四条已入库」会读起来像整条
+      都齐了，第二款的缺口就被静默盖住。当前 _RENTAL_HOLDOVER_MARKERS
+      刻意不覆盖「涨房租后想续租」这类纯二款问题，就是为了不拿一款的
+      正文去答二款的问题。
+    current_fallback: >-
+      无。这类问题目前只能落到第一款（不定期租赁）或合同通则，
+      答不了「房东能不能不租给我改租给别人」。
+    note: >-
+      录入方式与其他条目不同：不是新增一行，而是补全 seed_statutes.yaml
+      里第七百三十四条已有那行的 content（第一款后接第二款）。补全后本
+      条目可直接从 wishlist 删除，它不会自己变成「已入库」——库里不会
+      出现「第七百三十四条第二款」这个独立条号。
+      正文未经核验，勿凭记忆写入；官方详情接口只返回目录树不含正文，
+      取正文的路子见 docs/npc-flk-api.md。
+
+  - ref: 民法典.第一千二百零九条
+    law_name: 中华人民共和国民法典
+    source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+    topic: traffic_accident
+    why: >-
+      机动车所有人、管理人与使用人不是同一人时的责任分配（借车、
+      租车出事故）。traffic_accident 目前只有两条依据，借车肇事
+      这类常见情形没有对应条文。
+    current_fallback: >-
+      民法典.第一千二百零八条（交通事故责任适用道交法和侵权责任编）。
+      指向了适用规则但没解决「车主还是开车的人赔」这个实际争点。
+
+  - ref: 民法典.第五百七十八条
+    law_name: 中华人民共和国民法典
+    source_url: https://flk.npc.gov.cn/detail?id=ff808081729d1efe01729d50b5c500bf
+    topic: service_contract
+    why: >-
+      当事人一方明确表示不履行时，对方可以在履行期限届满前请求其
+      承担违约责任。健身房、培训机构明说「不退款」「不干了」但还
+      没到约定履行日期时需要本条。
+    current_fallback: >-
+      民法典.第五百七十七条（不履行合同义务的违约责任）。适用于
+      已经违约的情形，答不了「对方已经明说不办了，我现在就能主张吗」。

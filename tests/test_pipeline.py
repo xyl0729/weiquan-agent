@@ -313,6 +313,37 @@ def test_unverified_medical_topic_returns_general_basis_without_formal_artifacts
     }
 
 
+def test_grounding_packet_carries_letter_fields_for_unverified_topic(
+    tmp_path: Path,
+) -> None:
+    """依据包必须带上正文三字段，否则模型看不到正文，也就改不了正文。
+
+    校验层写好之后曾经有一段时间没有生产者填这三个字段，
+    _merged_letter 每次都返回 None，用户看到的正文仍然是模板。
+    这个断言就是防止接线再次断开。
+    """
+    provider = FakeProvider()
+    pipeline, _ = make_pipeline(tmp_path, provider=provider)
+
+    result = run(
+        pipeline.consult(
+            message="我租的房子甲醛超标，住进去以后一直头痛咳嗽",
+        )
+    )
+
+    assert result.guidance is not None
+    assert provider.composition_packet_calls
+    packet = provider.composition_packet_calls[-1]
+    assert packet.letter_recipient
+    assert packet.letter_objective
+    assert packet.letter_draft
+    # 草稿必须是模板正文本身，模型才有可改写的基线。
+    assert packet.letter_draft == packet.letter_draft.strip()
+    assert "您好" in packet.letter_draft
+    # 正文最终仍要出现在返回结果里，且非空。
+    assert result.guidance.communication_guide.message
+
+
 def test_unverified_privacy_and_reputation_returns_only_relevant_general_basis(
     tmp_path: Path,
 ) -> None:

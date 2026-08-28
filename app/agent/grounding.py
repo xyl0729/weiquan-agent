@@ -77,6 +77,11 @@ GENERAL_BASIS_REFS: dict[str, tuple[str, ...]] = {
         "民法典.第九百九十五条",
         "民法典.第一千零三十二条",
     ),
+    "payment_fraud": (
+        "民法典.第一千一百六十五条",
+        "消费者权益保护法.第四十四条",
+        "消费者权益保护法.第五十五条",
+    ),
     "general_rental": ("民法典.第五百零九条",),
     "property_neighbor": (
         "民法典.第二百八十六条",
@@ -100,17 +105,165 @@ GENERAL_BASIS_REFS: dict[str, tuple[str, ...]] = {
         "消费者权益保护法.第三十九条",
     ),
 }
+# 分支逻辑按案情追加的条文不在 GENERAL_BASIS_REFS 的静态映射里，
+# 必须单独并入白名单，否则会被「引用了依据包之外的法条」拦下。
 GENERAL_BASIS_REF_SET = frozenset(
     ref for refs in GENERAL_BASIS_REFS.values() for ref in refs
-) | {"民法典.第七百一十三条"}
+) | {
+    "民法典.第五百七十八条",
+    "民法典.第七百一十三条",
+    "民法典.第七百零三条",
+    "民法典.第七百二十一条",
+    "民法典.第七百二十九条",
+    "民法典.第七百三十一条",
+    "民法典.第七百三十四条",
+}
 
+# 报修类问题落在出租人的维修义务上（第七百一十三条：可请求限期维修）。
 _REPAIR_MARKERS = (
     "维修",
     "修理",
     "漏水",
+    "渗水",
     "坏了",
     "损坏",
     "不能使用",
+    "无法使用",
+    "不给修",
+    "不修",
+)
+
+# 危及安全或健康的居住条件另给第七百三十一条：租赁物危及承租人安全或
+# 健康时可随时解除合同，即使订立合同时已知质量不合格。
+# 这两类要分开——维修义务给的是「可以要求修」，而甲醛超标已经在损害
+# 健康，用户真正需要的是「可以直接解约搬走」，让他继续住着等维修
+# 并不是这类案情的答案。
+_HABITABILITY_MARKERS = (
+    "甲醛",
+    "空气质量",
+    "异味",
+    "发霉",
+    "霉变",
+    "有毒",
+    "危及健康",
+    "危及安全",
+    "住不了",
+    "没法住",
+    "不能住",
+)
+
+# 借车、租车导致车主与使用人不是同一人（第一千二百零九条）。
+_BORROWED_VEHICLE_MARKERS = (
+    "借车",
+    "借了车",
+    "借我车",
+    "借朋友的车",
+    "借了朋友的车",
+    "借来的车",
+    "租车",
+    "租的车",
+    "开别人的车",
+    "开朋友的车",
+    "车主",
+    "不是我的车",
+)
+
+# 预期违约：对方明确表示或以行为表明不履行（第五百七十八条）。
+# 与第五百七十七条的区别是时点——本条适用于履行期限还没到，
+# 对方已经明说不办了的情形。
+_ANTICIPATORY_BREACH_MARKERS = (
+    "明确表示不",
+    "明说不",
+    "说不退",
+    "说不干",
+    "不干了",
+    "拒绝退",
+    "拒不履行",
+    "还没到期",
+    "没到期",
+    "提前说",
+    "直接说不",
+    "回复说不",
+)
+
+# 租赁物毁损、灭失致使不能使用时可请求减租或免租（第七百二十九条）。
+# 「还要不要继续交租」是租房咨询里的高频问题，此前没有条文能回答。
+_RENT_REDUCTION_MARKERS = (
+    "减租",
+    "减免租金",
+    "少交租",
+    "不交租",
+    "还要交租",
+    "还用交租",
+    "要不要交租",
+    "断水",
+    "断电",
+    "查封",
+    "泡了",
+    "淹了",
+    "住不了",
+    "没法住",
+    "不能住",
+)
+# 租赁关系是否成立的起点（第七百零三条：租赁合同的定义）。
+# 没签书面合同、口头约定、二房东转租这类案情里，用户最先被质疑的
+# 不是权利内容而是「你算不算承租人」。先把关系认定立住，后面的
+# 维修、减租、解约条文才用得上。
+# 触发词限定在关系本身有争议的说法上——正常的租房纠纷不需要回头
+# 论证合同成立，无条件给出只会稀释真正对应案情的条文。
+_RENTAL_RELATION_MARKERS = (
+    "二房东",
+    "转租",
+    "没签合同",
+    "未签合同",
+    "没有合同",
+    "没签书面",
+    "口头说",
+    "口头约定",
+    "只是口头",
+    "不承认租",
+    "不承认我租",
+    "说我不是租客",
+)
+
+# 租金支付期限有争议时的补充规则（第七百二十一条）。
+# 本条的价值在没有约定或约定不明时才显现：租期不满一年的期满时付、
+# 一年以上的每满一年付。约定清楚的「押一付三」争议靠合同本身解决，
+# 因此触发词收在期限本身说不清或被单方改动的说法上。
+_RENT_PAYMENT_TERM_MARKERS = (
+    "提前交租",
+    "提前收租",
+    "押一付三",
+    "押二付三",
+    "交租时间",
+    "付租时间",
+    "什么时候交租",
+    "何时交租",
+    "催我交租",
+    "没约定租金",
+    "租金没约定",
+    "没说什么时候交",
+)
+
+# 租期届满后继续居住而出租人未提异议的，原合同继续有效但转为不定期
+# （第七百三十四条第一款）。
+# 这条回答的是「到期了房东突然赶我走」——只要人还住着、房东此前没
+# 提异议，合同并未随期限自动终止。
+# 注意库内第七百三十四条只录了第一款，第二款的优先承租权不在正文里，
+# 所以触发词不覆盖「涨房租后想续租」这类纯优先承租权的问题，避免用
+# 一款的正文去答二款的问题。缺口已记入 data/statute_wishlist.yaml。
+_RENTAL_HOLDOVER_MARKERS = (
+    "到期了",
+    "合同到期",
+    "租期到期",
+    "租期届满",
+    "到期后还住",
+    "继续住",
+    "还住着",
+    "不让续租",
+    "不给续租",
+    "不让我住",
+    "赶我走",
 )
 _NO_RESPONSE_MARKERS = (
     "不理",
@@ -339,6 +492,52 @@ _UNSAFE_CONCLUSION_PATTERNS = (
     re.compile(r"(?:三倍|十倍|[0-9]+倍)赔偿"),
 )
 
+# 正文是用户真的会发给房东、商家或单位的文本，写错的后果比一段摘要重。
+# 因此除了通用的网址、条号、数字校验外，另外禁止两类内容：
+# 代对方许诺义务（对方并未作出承诺，写进信里会误导用户），
+# 以及替用户放弃权利或作出让步。
+_LETTER_FORBIDDEN_PATTERNS = (
+    re.compile(r"(?:您|你|对方|贵(?:公司|方|司))?\s*(?:必须|应当|须|应)"
+               r".{0,12}(?:赔偿|退款|退还|支付|承担全部)"),
+    re.compile(r"(?:限|于).{0,8}(?:日内|小时内|个工作日内)"
+               r".{0,10}(?:赔偿|退款|退还|支付|处理完毕)"),
+    re.compile(r"(?:否则|不然).{0,15}(?:起诉|报警|曝光|投诉到|追究)"),
+    re.compile(r"我(?:放弃|不再主张|同意不)"),
+    re.compile(r"(?:依据|根据|违反了?)\s*《"),
+)
+
+# 直接发给对方的正文里不该出现执法或第三方机构名：向机构反映属于
+# escalation 字段的后续升级路径，混进正文会把一封沟通信变成投诉举报信，
+# 既可能提前激化关系，也可能让用户误以为已经启动了官方程序。
+# 依据包草稿本身提到某机构时（例如对方就是该机构）不在此限。
+_LETTER_AUTHORITY_MARKERS = (
+    "法院",
+    "起诉",
+    "报警",
+    "公安",
+    "派出所",
+    "检察",
+    "仲裁",
+    "劳动监察",
+    "市场监管",
+    "消协",
+    "消费者协会",
+    "信访",
+    "举报",
+    "媒体",
+    "曝光",
+)
+
+# 动作与证据条目改写校验的两个参数。
+# 片段长度 4：中文里 4 字片段已足以承载一个具体动作要素（「书面通知」
+# 「保存凭证」），再短就会被通用词组大量误配。
+# 覆盖率 0.40：实测三类正常改写（换措辞、调顺序、补案情细节）落在
+# 0.541~0.565，而凭空新增和无关内容全是 0.000，两簇之间没有重叠。
+# 阈值取 0.40 留出余量：宁可放过一点改写也不误拒正常成文，因为条目
+# 被拒会导致整轮成文作废、退回模板，那正是要修的模板腔本身。
+_ITEM_SHINGLE = 4
+_ITEM_MIN_COVERAGE = 0.40
+
 _GENERAL_NOTICE = (
     "这是该类纠纷的一般法律依据，是否适用于本案仍需结合具体关系、"
     "约定、履行情况和证据核对。"
@@ -503,6 +702,21 @@ class GroundingPacket(BaseModel):
         min_length=1,
         max_length=1200,
     )
+    letter_recipient: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+    )
+    letter_objective: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=300,
+    )
+    letter_draft: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1500,
+    )
 
     @field_validator(
         "completed_actions",
@@ -544,6 +758,11 @@ class GroundedAnswerDraft(BaseModel):
     limitations: list[str] = Field(default_factory=list, max_length=8)
     next_question: str | None = Field(default=None, min_length=1, max_length=500)
     used_statute_ids: list[str] = Field(default_factory=list, max_length=8)
+    letter_body: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1500,
+    )
 
 
 class GroundedAnswerComposition(GroundedAnswerDraft):
@@ -592,6 +811,11 @@ def general_basis_refs(topic_id: str, message: str) -> tuple[str, ...]:
         return tuple(dict.fromkeys(selected))[:3]
     if topic_id == "traffic_accident":
         selected = ["民法典.第一千二百零八条"]
+        # 车主与使用人不是同一人时，赔偿主体的认定依据。
+        # 这条不能无条件给：自己开自己的车出事故时它不适用，
+        # 摆出来只会让用户以为还有别人该分担责任。
+        if any(marker in message for marker in _BORROWED_VEHICLE_MARKERS):
+            selected.append("民法典.第一千二百零九条")
         if any(marker in message for marker in _INJURY_MARKERS):
             selected.append("民法典.第一千一百七十九条")
         return tuple(selected)
@@ -612,10 +836,34 @@ def general_basis_refs(topic_id: str, message: str) -> tuple[str, ...]:
             for ref in refs
             if ref != "食品安全法.第一百四十八条"
         )
-    if topic_id == "general_rental":
-        if any(marker in message for marker in _REPAIR_MARKERS):
-            return (*refs, "民法典.第七百一十三条")
+    if topic_id == "service_contract":
+        # 对方明确表示不履行时，可在履行期限届满前就主张违约责任
+        # （第五百七十八条）。健身房、培训机构明说「不干了」「不退」
+        # 但还没到约定履行日期的情形需要本条；已经违约的情形用
+        # 第五百七十七条即可，因此这条按案情追加而不是无条件给出。
+        if any(marker in message for marker in _ANTICIPATORY_BREACH_MARKERS):
+            return (*refs, "民法典.第五百七十八条")
         return refs
+    if topic_id == "general_rental":
+        selected = list(refs)
+        # 危及安全或健康时先给解约权：这类案情里用户已经在受损害，
+        # 「可以随时解除合同」比「可以要求维修」更贴近他的处境。
+        if any(marker in message for marker in _HABITABILITY_MARKERS):
+            selected.append("民法典.第七百三十一条")
+        if any(marker in message for marker in _REPAIR_MARKERS):
+            selected.append("民法典.第七百一十三条")
+        # 租赁物毁损、灭失导致无法使用时可主张减租或免租。
+        if any(marker in message for marker in _RENT_REDUCTION_MARKERS):
+            selected.append("民法典.第七百二十九条")
+        # 关系认定、租金期限、到期续住三类争议此前在库里有条文但无
+        # 代码引用，general_rental 只有第五百零九条一条通则兜底。
+        if any(marker in message for marker in _RENTAL_RELATION_MARKERS):
+            selected.append("民法典.第七百零三条")
+        if any(marker in message for marker in _RENT_PAYMENT_TERM_MARKERS):
+            selected.append("民法典.第七百二十一条")
+        if any(marker in message for marker in _RENTAL_HOLDOVER_MARKERS):
+            selected.append("民法典.第七百三十四条")
+        return tuple(dict.fromkeys(selected))
     if topic_id == "workplace_harassment":
         selected = []
         if any(marker in message for marker in _SEXUAL_HARASSMENT_MARKERS):
@@ -732,6 +980,9 @@ def build_local_answer(packet: GroundingPacket) -> GroundedAnswerDraft:
         limitations=packet.limitations[:8],
         next_question=question,
         used_statute_ids=used_statute_ids[:8],
+        # 本地兜底草稿原样带上依据包里的正文，不做任何改写：
+        # 这条路径在模型不可用或被跳过时生效，此时保持模板正文即为正确行为。
+        letter_body=packet.letter_draft,
     )
 
 
@@ -742,14 +993,90 @@ def should_compose_grounded_answer(
     is_followup: bool,
 ) -> bool:
     if packet.coverage_mode == "emergency_guidance":
+        # 紧急情况下本地文案是固定的安全优先步骤，不交给模型改写。
         return False
+    # is_followup 已经覆盖了所有追问轮，因此这道门实际只对首轮生效。
+    # 原先白名单里没有 new_fact，而首轮最常见的形态恰恰是用户第一次
+    # 描述自己的遭遇（「我租的房子甲醛超标，住进去以后一直头痛咳嗽」
+    # 被归为 new_fact）。这类消息若又落在未核验主题上拿不到法条，
+    # 五个条件会同时落空，模型完全不被调用，用户看到的就是纯模板。
+    # 首轮描述恰恰是最需要按案情成文的一轮，因此纳入白名单。
     return bool(
         is_followup
         or packet.verified_statutes
         or packet.formal_findings
-        or packet.turn_intent in {"question", "stated_goal", "correction"}
+        or packet.turn_intent
+        in {"question", "stated_goal", "correction", "new_fact"}
         or len(draft.direct_reply) < 40
     )
+
+
+def _shingles(text: str, size: int) -> set[str]:
+    if len(text) < size:
+        return set()
+    return {text[index : index + size] for index in range(len(text) - size + 1)}
+
+
+def _coverage_ratio(text: str, candidate: str) -> float:
+    """text 的字符片段有多大比例能在 candidate 中找到。
+
+    用覆盖率而不是「命中任一片段」：实测单片段命中太松，一条凭空
+    新增的动作只要含有「保存」「记录」这类通用搭配就能蒙过检查。
+    覆盖率要求改写后的整句大部分内容都源自同一条已批准条目。
+    """
+    pieces = _shingles(text, _ITEM_SHINGLE)
+    if not pieces:
+        return 0.0
+    matched = sum(1 for piece in pieces if piece in candidate)
+    return matched / len(pieces)
+
+
+def _validate_rewritten_items(
+    items: list[str],
+    approved: list[str],
+    *,
+    label: str,
+) -> None:
+    """校验模型改写后的动作或证据条目。
+
+    原先这里用 issubset，模型只能整条保留或整条删除，无法按案情改写。
+    这是模板腔的主要来源：不论用户描述的是甲醛还是欠薪，动作和证据
+    都是逐字相同的模板句。
+
+    现在允许改写措辞，但每条都必须大部分内容源自同一条已批准条目
+    （按字符片段覆盖率判断），因此可以调整称谓、补入案情细节、合并
+    表述，却无法凭空造出依据包里没有的动作。另外单独禁止引入机构名：
+    向法院、监管部门反映属于 escalation 的后续升级路径，混进当前步骤
+    会让用户以为现在就该去告，而依据包并没有批准这一步。
+    """
+    if not items:
+        raise ValueError(f"成文结果的{label}为空")
+    approved_normalized = [
+        normalize_visible_text(item) for item in approved
+    ]
+    approved_source = " ".join(approved_normalized)
+    for item in items:
+        normalized = normalize_visible_text(item)
+        if not normalized:
+            raise ValueError(f"成文结果的{label}为空")
+        for marker in _LETTER_AUTHORITY_MARKERS:
+            if marker in item and marker not in approved_source:
+                raise ValueError(
+                    f"成文结果的{label}引入了依据包之外的升级途径"
+                )
+        if normalized in approved_source:
+            continue
+        best = max(
+            (
+                _coverage_ratio(normalized, candidate)
+                for candidate in approved_normalized
+            ),
+            default=0.0,
+        )
+        if best < _ITEM_MIN_COVERAGE:
+            raise ValueError(
+                f"成文结果的{label}偏离了依据包批准的内容"
+            )
 
 
 def merge_grounded_answer(
@@ -764,10 +1091,16 @@ def merge_grounded_answer(
         raise ValueError("成文结果引用了依据包之外的法条")
     if composition.next_question != draft.next_question:
         raise ValueError("成文结果改变了后端允许的唯一问题")
-    if not set(composition.actions).issubset(packet.allowed_actions):
-        raise ValueError("成文结果增加或改写了未批准动作")
-    if not set(composition.evidence).issubset(packet.evidence_targets):
-        raise ValueError("成文结果增加或改写了未批准证据")
+    _validate_rewritten_items(
+        composition.actions,
+        packet.allowed_actions,
+        label="动作",
+    )
+    _validate_rewritten_items(
+        composition.evidence,
+        packet.evidence_targets,
+        label="证据",
+    )
     if not set(composition.legal_explanation).issubset(
         draft.legal_explanation
     ):
@@ -777,6 +1110,8 @@ def merge_grounded_answer(
     if not composition.actions or not composition.evidence:
         raise ValueError("成文结果缺少具体动作或证据")
 
+    letter = _merged_letter(packet, composition)
+
     visible_text = "\n".join(
         [
             composition.direct_reply,
@@ -785,6 +1120,7 @@ def merge_grounded_answer(
             *composition.legal_explanation,
             *composition.limitations,
             composition.next_question or "",
+            letter or "",
         ]
     )
     if _URL_PATTERN.search(visible_text) or _ARTICLE_PATTERN.search(
@@ -817,7 +1153,50 @@ def merge_grounded_answer(
         limitations=composition.limitations,
         next_question=composition.next_question,
         used_statute_ids=composition.used_statute_ids,
+        letter_body=letter,
     )
+
+
+def _merged_letter(
+    packet: GroundingPacket,
+    composition: GroundedAnswerComposition,
+) -> str | None:
+    """校验模型改写后的沟通正文。
+
+    正文原先完全不进依据包，模型看不到也改不了，于是每个未核验主题
+    都拿到同一段模板文字。现在允许模型按案情重写，但它是用户真的会
+    发出去的文本，因此校验比其他字段更严：不得代对方许诺义务、
+    不得替用户放弃权利、不得把信改寄给依据包之外的第三方机构。
+
+    返回 None 表示不替换模板正文，调用方保留模板值；抛出 ValueError
+    表示模型越界，整轮成文作废。
+    """
+    letter = composition.letter_body
+    if letter is None:
+        return None
+    normalized = letter.strip()
+    if not normalized:
+        return None
+    if packet.letter_draft is None:
+        raise ValueError("依据包未提供正文草稿时不得生成沟通正文")
+    for pattern in _LETTER_FORBIDDEN_PATTERNS:
+        if pattern.search(normalized):
+            raise ValueError("沟通正文包含代对方承诺或放弃权利的表述")
+    # 正文不得把信改寄给依据包之外的第三方机构。原先这里比对
+    # letter_recipient 是否出现在正文中，但 recipient 是角色描述
+    # （「与事件直接相关、能够登记和处理问题的负责人」），模板正文
+    # 本身也不含这串字，那道检查连未改动的模板都会拒绝。真正要防的
+    # 是模型把发给房东的信写成投诉举报信：机构名属于 escalation
+    # 字段的升级路径，不该出现在直接发给对方的正文里。
+    reference = " ".join(
+        part
+        for part in (packet.letter_draft, packet.letter_recipient)
+        if part
+    )
+    for marker in _LETTER_AUTHORITY_MARKERS:
+        if marker in normalized and marker not in reference:
+            raise ValueError("沟通正文出现依据包之外的第三方机构")
+    return normalized
 
 
 def _local_direct_reply(packet: GroundingPacket) -> str:

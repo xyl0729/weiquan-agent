@@ -681,14 +681,23 @@ class DeepSeekProvider:
             "你是有依据的中文法律咨询成文器，只输出一个 JSON 对象。"
             "顶层字段只能是 direct_reply、actions、evidence、"
             "legal_explanation、limitations、next_question、"
-            "used_statute_ids。先直接回应 current_message，再给出当前可"
+            "used_statute_ids、letter_body。先直接回应 current_message，再给出当前可"
             "执行动作和要保留的证据。actions 必须逐字复制"
             "allowed_actions 中的项目，evidence 必须逐字复制"
             "evidence_targets 中的项目，legal_explanation 只能逐字复制"
             "local_legal_explanation 中的项目，limitations 只能逐字复制"
             "limitations 中的项目。used_statute_ids 只能选择"
             "verified_statutes.statute_id，next_question 只能等于"
-            "one_allowed_next_question 或 null。不得增加事实、数字、"
+            "one_allowed_next_question 或 null。"
+            "letter_body 是用户将要发给对方的沟通正文，也是唯一允许你自己"
+            "组织语言的字段：以 letter_draft 为唯一事实来源改写，只能让它"
+            "更像真人书面陈述，可以调整语序、合并重复的句子、去掉生硬的"
+            "模板措辞。只写 confirmed_facts 和 letter_draft 里已有的事实，"
+            "不得补充任何新情节；诉求必须与 letter_objective 一致；"
+            "不得替对方许诺赔偿、退款或期限，不得替用户放弃权利或让步，"
+            "不得写威胁性后果，不得在正文中引用法条名称或条号。"
+            "letter_draft 为空时 letter_body 必须为 null。"
+            "不得增加事实、数字、"
             "金额、倍数、时效、网址、条号、责任结论或胜诉承诺；不得"
             "改变意图、主题、正式结论和用户诉求。陈述式诉求要明确"
             "确认，不能写成用户已经完成了相应动作。"
@@ -757,6 +766,15 @@ class DeepSeekProvider:
             "limitations",
             "used_statute_ids",
         )
+        # letter_body 是 str | None 且 min_length=1，模型给空串会直接触发
+        # ValidationError，让整轮咨询失败；依据包没有草稿时给出正文也会被
+        # _merged_letter 拒绝。这两种情况都只说明这一段正文不可用，其余
+        # 内容仍然有效，因此降级成「无正文」而不是废掉整个回答。
+        letter_body = raw.get("letter_body")
+        if not isinstance(letter_body, str) or not letter_body.strip():
+            raw["letter_body"] = None
+        elif packet.letter_draft is None:
+            raw["letter_body"] = None
         raw["provider"] = self.name
         raw["model"] = self.model
         raw["request_id"] = request_id

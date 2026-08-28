@@ -1,0 +1,178 @@
+[
+ {
+  "message": "他们把我的钱扣了不给我",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.2,
+  "turn_intent": "new_fact",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我交了钱他们东西一直不给",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "new_fact",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "说好的事又反悔了",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.1,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我被赶出来了",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "签完字才发现不对劲",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": null,
+  "turn_intent": "new_fact",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "他把我东西弄坏了赔不赔",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我想把我的钱要回来",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "stated_goal",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "对方拉黑我了怎么办",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "孩子受伤了谁负责",
+  "label": "underdetermined",
+  "candidate_topic_id": "education_minor_safety",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "他们要罚我钱",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.2,
+  "turn_intent": "new_fact",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我这个还能退吗",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "东西送来跟说的不一样",
+  "label": "underdetermined",
+  "error": "ProviderOutputError: 模型返回格式无效"
+ },
+ {
+  "message": "他一直拖着不处理",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.1,
+  "turn_intent": "continue_case",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我签的时候没看清条款",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.2,
+  "turn_intent": "new_fact",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "现在他说这不算数",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我还能拿回多少",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.1,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "他们说是我自己的问题",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "这个费用是不是不合理",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": null,
+  "turn_intent": "question",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我当时是口头答应的",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "new_fact",
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "对方换人了不认之前的话",
+  "label": "underdetermined",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.2,
+  "turn_intent": "new_fact",
+  "candidate_score": null,
+  "explicit_match": null
+ }
+]

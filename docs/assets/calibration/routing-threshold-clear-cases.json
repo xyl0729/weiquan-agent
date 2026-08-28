@@ -1,0 +1,397 @@
+[
+ {
+  "message": "住进去就头痛咳嗽，屋里味儿特别冲",
+  "label": "should_trust",
+  "candidate_topic_id": "general_rental",
+  "confidence": 0.6,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "房东收了钱一直不给我修，都两个月了",
+  "label": "should_trust",
+  "candidate_topic_id": "general_rental",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "我押金到现在都没还我",
+  "label": "should_trust",
+  "candidate_topic_id": "deposit_deduction",
+  "confidence": null,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": 2,
+  "explicit_match": "deposit_deduction"
+ },
+ {
+  "message": "干了三个月一分钱没拿到",
+  "label": "should_trust",
+  "candidate_topic_id": "wage_social_insurance",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "公司说不要我了，让我明天别来了",
+  "label": "should_trust",
+  "candidate_topic_id": "labor_termination",
+  "confidence": 0.9,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "邻居家那条狗把我腿咬破了",
+  "label": "should_trust",
+  "candidate_topic_id": "personal_injury",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "在商场地上滑倒摔断了胳膊",
+  "label": "should_trust",
+  "candidate_topic_id": "personal_injury",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "健身房关门跑了，卡里还有八千",
+  "label": "should_trust",
+  "error": "ProviderOutputError: 模型返回格式无效"
+ },
+ {
+  "message": "快递说给我送到了，其实东西根本没影",
+  "label": "should_trust",
+  "candidate_topic_id": "logistics_travel_food",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "外卖吃完上吐下泻进医院了",
+  "label": "should_trust",
+  "candidate_topic_id": "logistics_travel_food",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "医院死活不给我复印病历",
+  "label": "should_trust",
+  "candidate_topic_id": "medical_service_dispute",
+  "confidence": null,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": 2,
+  "explicit_match": "medical_service_dispute"
+ },
+ {
+  "message": "对方全责撞了我的车，现在不认账",
+  "label": "should_trust",
+  "candidate_topic_id": "traffic_accident",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "借给他的钱说好半年还，现在人躲着不见",
+  "label": "should_trust",
+  "candidate_topic_id": "debt_collection",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "天天有人打电话到我单位说我欠钱",
+  "label": "should_trust",
+  "candidate_topic_id": "debt_collection",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "我照片被人发到群里配了难听的话",
+  "label": "should_trust",
+  "candidate_topic_id": "privacy_reputation",
+  "confidence": null,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "孩子在学校被同学推下楼梯摔了",
+  "label": "should_trust",
+  "candidate_topic_id": "education_minor_safety",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "离婚了他一分抚养费都不给",
+  "label": "should_trust",
+  "candidate_topic_id": "family_support_property",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 3,
+  "explicit_match": "family_support_property"
+ },
+ {
+  "message": "游戏号突然被封了，里面充了不少钱",
+  "label": "should_trust",
+  "candidate_topic_id": "game_account_dispute",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "楼上装修把我家天花板砸漏了",
+  "label": "should_trust",
+  "candidate_topic_id": "property_neighbor",
+  "confidence": 0.8,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": "renovation_default"
+ },
+ {
+  "message": "领导总在办公室说些让我很不舒服的话",
+  "label": "should_trust",
+  "candidate_topic_id": "workplace_harassment",
+  "confidence": 0.7,
+  "turn_intent": "new_fact",
+  "risk_flags": [],
+  "candidate_score": 0,
+  "explicit_match": null
+ },
+ {
+  "message": "我遇到点事，心里挺乱的",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "这事该怎么办啊",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.2,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "他们太欺负人了",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.2,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我想问一下我的情况",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "有点麻烦，不知道找谁",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "你能帮我吗",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "最近碰到一些不顺心的事",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.1,
+  "turn_intent": "continue_case",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我觉得他们做得不对",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.2,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "想咨询个问题",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "这种情况正常吗",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": null,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我朋友让我来问问",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "对方一直不回复我",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": null,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我该准备些什么",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.5,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "这样下去我很被动",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "continue_case",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我想知道我有没有道理",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "事情已经拖很久了",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.2,
+  "turn_intent": "continue_case",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我不太懂这些",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "需要花很多钱吗",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "能不能给点建议",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.3,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ },
+ {
+  "message": "我还有别的办法吗",
+  "label": "should_drop",
+  "candidate_topic_id": "unknown",
+  "confidence": 0.1,
+  "turn_intent": "question",
+  "risk_flags": [],
+  "candidate_score": null,
+  "explicit_match": null
+ }
+]

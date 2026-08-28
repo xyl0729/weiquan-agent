@@ -225,7 +225,15 @@ def test_general_basis_mapping_is_explicit_and_does_not_guess() -> None:
                 "消费者权益保护法.第三十九条",
             ),
         ),
-        ("payment_fraud", "有人冒充客服骗我转账", ()),
+        (
+            "payment_fraud",
+            "有人冒充客服骗我转账",
+            (
+                "民法典.第一千一百六十五条",
+                "消费者权益保护法.第四十四条",
+                "消费者权益保护法.第五十五条",
+            ),
+        ),
     ],
 )
 def test_general_basis_mapping_selects_only_relevant_verified_law(
@@ -441,6 +449,137 @@ def test_composition_cannot_expand_grounding_packet(
 
     with pytest.raises(ValueError):
         merge_grounded_answer(source, draft, composition)
+
+
+LETTER_DRAFT = (
+    "您好，我想书面反映一项与“退货换货被拒”相关的情况。"
+    "我的当前请求是：请补发正确商品。"
+    "请确认收到，并以书面方式告知处理联系人和下一步安排。"
+)
+LETTER_RECIPIENT = "与事件直接相关、能够登记和处理问题的负责人"
+
+
+def letter_packet(**updates: object) -> GroundingPacket:
+    values: dict[str, object] = {
+        "letter_recipient": LETTER_RECIPIENT,
+        "letter_objective": "确认收到情况说明，并告知处理联系人和下一步安排",
+        "letter_draft": LETTER_DRAFT,
+    }
+    values.update(updates)
+    return packet(**values)
+
+
+def letter_composition(
+    source: GroundingPacket,
+    letter_body: str | None,
+) -> GroundedAnswerComposition:
+    draft = build_local_answer(source)
+    return GroundedAnswerComposition(
+        direct_reply=draft.direct_reply,
+        actions=source.allowed_actions,
+        evidence=source.evidence_targets,
+        legal_explanation=draft.legal_explanation,
+        limitations=source.limitations,
+        next_question=source.one_allowed_next_question,
+        used_statute_ids=["民法典.第五百七十七条"],
+        letter_body=letter_body,
+        provider="fake",
+        model="fake-deterministic-v1",
+    )
+
+
+def test_local_answer_carries_letter_draft_from_packet() -> None:
+    assert build_local_answer(letter_packet()).letter_body == LETTER_DRAFT
+    assert build_local_answer(packet()).letter_body is None
+
+
+def test_unmodified_letter_template_passes_validation() -> None:
+    """模板正文必须能通过校验。
+
+    收件人字段是角色描述而非称呼，模板正文本身也不含那串字，
+    早期版本据此比对会把未改动的模板一并拒掉。
+    """
+    source = letter_packet()
+    draft = build_local_answer(source)
+
+    merged = merge_grounded_answer(
+        source,
+        draft,
+        letter_composition(source, LETTER_DRAFT),
+    )
+
+    assert merged.letter_body == LETTER_DRAFT
+
+
+def test_letter_may_be_rewritten_for_the_specific_case() -> None:
+    source = letter_packet()
+    draft = build_local_answer(source)
+    rewritten = (
+        "您好，我是这笔订单的买家。收到的商品与下单商品不一致，"
+        "希望尽快补发正确商品。请确认收到，并以书面方式告知"
+        "处理联系人和下一步安排。"
+    )
+
+    merged = merge_grounded_answer(
+        source,
+        draft,
+        letter_composition(source, rewritten),
+    )
+
+    assert merged.letter_body == rewritten
+
+
+@pytest.mark.parametrize(
+    "letter_body",
+    [
+        # 代对方许诺义务：对方并未作出承诺。
+        "您好，关于这笔订单，您必须全额退款。请确认收到。",
+        # 限期加威胁：把沟通信写成催告函。
+        "您好，请于三日内退款，否则我将起诉。请确认收到。",
+        # 替用户放弃权利。
+        "您好，我放弃主张其他赔偿，只要补发。请确认收到。",
+        # 混入依据包之外的第三方机构。
+        "您好，我已向市场监管部门举报此事。请确认收到。",
+        # 正文内引用法条条号。
+        "您好，根据《民法典》相关规定，请补发正确商品。请确认收到。",
+    ],
+)
+def test_letter_rejects_overreaching_rewrites(letter_body: str) -> None:
+    source = letter_packet()
+    draft = build_local_answer(source)
+
+    with pytest.raises(ValueError):
+        merge_grounded_answer(
+            source,
+            draft,
+            letter_composition(source, letter_body),
+        )
+
+
+def test_letter_requires_a_draft_in_the_packet() -> None:
+    """依据包没给草稿时，模型不得凭空生成正文。"""
+    source = packet()
+    draft = build_local_answer(source)
+
+    with pytest.raises(ValueError):
+        merge_grounded_answer(
+            source,
+            draft,
+            letter_composition(source, LETTER_DRAFT),
+        )
+
+
+def test_missing_letter_body_falls_back_to_no_letter() -> None:
+    source = letter_packet()
+    draft = build_local_answer(source)
+
+    for empty in (None, "   "):
+        merged = merge_grounded_answer(
+            source,
+            draft,
+            letter_composition(source, empty),
+        )
+        assert merged.letter_body is None
 
 
 def test_second_stage_is_used_for_contextual_or_legal_answer() -> None:

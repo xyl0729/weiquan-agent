@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
@@ -769,6 +770,35 @@ class SafetySignalGate:
         return tuple(flag for flag in _RISK_ORDER if flag in detected)
 
 
+# 模型给出了具体主题、但该主题的关键词对这条消息一个都没命中时，
+# 要不要仍然采信模型。这个下限只在那种情形下生效（见 semantic_confident）。
+#
+# 0.55 是量出来的，不是猜的。跑真实 DeepSeek 抽取 71 条探针
+# （scripts/calibrate_routing_threshold*.py，三簇：口语化的明确案情、
+# 欠定消息、表面像 A 实则是 B），按「模型弃权」和「模型下判断」分簇：
+#
+#   模型弃权（candidate_topic_id=unknown），n=30：0.1 ~ 0.5
+#   模型下判断且关键词得分为 0，n=23：      0.6 ~ 0.9
+#
+# 两簇之间有 0.10 宽的空隙，取中点 0.55。含糊消息全部落在 0.5 及以下，
+# 模型真正下判断时最低 0.6，所以 0.55 既放行全部 23 条判断，
+# 又高于全部 30 条弃权。
+#
+# 原值 0.80 是从未校准的猜测，实测误拒簇 B 的 43%（10/23），
+# 其中包括甲醛案的口语表述「住进去就头痛咳嗽，屋里味儿特别冲」
+# （模型给 general_rental，confidence 0.6，正确）。被丢弃后 topic_id
+# 落回 unknown，而 infer_topic 对这句返回 None（触发词表里没有
+# 「头痛」「味儿冲」，只有「甲醛」），最终一条法条都给不出——正是
+# 本项目要修的那个问题。
+#
+# 已知未解决的问题：这道门挡不住「模型答错但很自信」。71 条里唯一
+# 一条在管辖分支内答错的样本（「在公司楼梯上摔伤了，公司说不算工伤」
+# → personal_injury，应为 wage_social_insurance）confidence 是 0.7，
+# 落在正确簇的正中间。任何阈值都分不开这两者，调高只会连正确的一起
+# 拒掉。这类错误得靠别的机制（主题间的互斥判定），不是靠阈值。
+_SEMANTIC_CONFIDENCE_FLOOR = 0.55
+
+
 class ScenarioRouter:
     def __init__(
         self,
@@ -852,7 +882,10 @@ class ScenarioRouter:
         )
         semantic_confident = (
             extraction.confidence is not None
-            and extraction.confidence >= max(self.min_confidence, 0.80)
+            and extraction.confidence >= max(
+                self.min_confidence,
+                _SEMANTIC_CONFIDENCE_FLOOR,
+            )
         )
         contextual_formal_match = (
             candidate is not None
@@ -903,6 +936,7 @@ class ScenarioRouter:
                 mode="emergency_guidance",
                 confidence=extraction.confidence,
                 risk_flags=risk_flags,
+                model_label=extraction.topic_label,
             )
             return RoutedExtraction(
                 coverage=coverage,
@@ -930,6 +964,7 @@ class ScenarioRouter:
             mode="unverified_guidance",
             confidence=extraction.confidence,
             risk_flags=(),
+            model_label=extraction.topic_label,
         )
         return RoutedExtraction(
             coverage=coverage,
@@ -968,9 +1003,17 @@ class ScenarioRouter:
         mode: CoverageMode,
         confidence: float | None,
         risk_flags: tuple[RiskFlag, ...],
+        model_label: str | None = None,
     ) -> CoverageResult:
         topic_id = topic.id if topic is not None else "unknown"
-        topic_label = topic.label if topic is not None else "其他未核验问题"
+        if topic is not None:
+            topic_label = topic.label
+        else:
+            # 注册表只认预定义主题，超出词表时用模型给的标签，
+            # 避免内部兜底串出现在用户可见文案里。
+            topic_label = (
+                sanitize_topic_label(model_label) or FALLBACK_TOPIC_LABEL
+            )
         if mode == "formal":
             notice = "已进入本地核验的正式处理流程。"
             playbook_id = topic.playbook_id if topic is not None else None
@@ -995,6 +1038,56 @@ class ScenarioRouter:
             notice=notice,
             risk_flags=list(risk_flags),
         )
+
+
+_LABEL_URL_PATTERN = re.compile(
+    r"(https?://|www\.|[a-z0-9-]+\.(com|cn|net|org|gov))",
+    re.IGNORECASE,
+)
+_LABEL_ARTICLE_PATTERN = re.compile(r"第[一二三四五六七八九十百千零〇\d]+条")
+_LABEL_INJECTION_MARKERS = (
+    "prompt",
+    "system",
+    "instruction",
+    "ignore",
+    "assistant",
+    "playbook",
+    "coverage",
+    "verdict",
+    "api",
+    "key",
+    "指令",
+    "提示词",
+    "系统",
+    "忽略",
+)
+FALLBACK_TOPIC_LABEL = "你描述的这件事"
+
+
+def sanitize_topic_label(value: str | None) -> str | None:
+    """校验模型给出的主题标签，供用户可见文案使用。
+
+    模型标签是拓宽覆盖面的关键信息：注册表只认 25 个预定义主题，
+    超出词表的问题拿不到任何标签。但它同时是不可信输入，展示前
+    必须过滤网址、法条编号和 prompt 回显。
+    """
+    if value is None:
+        return None
+    # 结构字符必须在归一化之前检查：" ".join(split()) 会把换行和
+    # 制表符变成空格，放到后面这道检查就永远不会触发。
+    if any(char in value for char in "\n\r\t{}[]<>|"):
+        return None
+    normalized = " ".join(value.split()).strip("“”\"'`《》()（） \t")
+    if not 2 <= len(normalized) <= 30:
+        return None
+    if _LABEL_URL_PATTERN.search(normalized):
+        return None
+    if _LABEL_ARTICLE_PATTERN.search(normalized):
+        return None
+    lowered = normalized.lower()
+    if any(marker in lowered for marker in _LABEL_INJECTION_MARKERS):
+        return None
+    return normalized
 
 
 def _generic_facts(values: dict[str, Any]) -> dict[str, Any]:
